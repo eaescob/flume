@@ -1137,9 +1137,12 @@ async fn process_input(
                     }
                     app.system_message("Usage: /theme <name> | /theme reload");
                 } else if args == "reload" {
-                    // Signal main loop to reload current theme
-                    app.system_message("Theme reload requested");
-                    // The hot-reload check will pick up changes on next tick
+                    // Signal forced reload
+                    app.theme_switch = Some("__reload__".to_string());
+                } else if args == "path" {
+                    // Show where themes are loaded from
+                    let dir = flume_core::config::themes_dir();
+                    app.system_message(&format!("Themes directory: {}", dir.display()));
                 } else {
                     app.theme_switch = Some(args.to_string());
                 }
@@ -1688,6 +1691,18 @@ fn show_help_topic(topic: &str, app: &mut App) {
             app.system_message("  list             — list configured networks");
             app.system_message("  set <n> <k> <v>  — set a network field");
             app.system_message("  connect <name>   — connect to a network");
+            app.system_message("");
+            app.system_message("  Authentication examples:");
+            app.system_message("    /secure set libera_pass my-password");
+            app.system_message("    /server set libera auth_method sasl");
+            app.system_message("    /server set libera sasl_username mynick");
+            app.system_message("    /server set libera sasl_password ${libera_pass}");
+            app.system_message("");
+            app.system_message("  NickServ example:");
+            app.system_message("    /server set libera auth_method nickserv");
+            app.system_message("    /server set libera nickserv_password ${libera_pass}");
+            app.system_message("");
+            app.system_message("  The ${name} syntax references vault secrets.");
         }
         "secure" | "vault" => {
             app.system_message("/secure init|set|del|list|unlock|passphrase");
@@ -1710,11 +1725,15 @@ fn show_help_topic(topic: &str, app: &mut App) {
             app.system_message("  Set mode in config.toml: [ui.keybindings] mode = \"vi\"");
         }
         "theme" => {
-            app.system_message("/theme [name|reload]");
+            app.system_message("/theme [name|reload|path]");
             app.system_message("  Switch themes or reload the current theme.");
             app.system_message("  /theme             — list available themes");
             app.system_message("  /theme <name>      — switch to a theme");
-            app.system_message("  /theme reload      — hot-reload current theme");
+            app.system_message("  /theme reload      — force-reload current theme");
+            app.system_message("  /theme path        — show themes directory");
+            app.system_message("");
+            app.system_message("  Themes are TOML files in ~/.local/share/flume/themes/");
+            app.system_message("  Copy example themes: cp examples/themes/*.toml ~/.local/share/flume/themes/");
         }
         "search" | "grep" | "find" => {
             app.system_message("/search <pattern>");

@@ -202,6 +202,22 @@ impl Theme {
         *self = new_theme;
     }
 
+    /// Force a reload of the current theme file. Returns true if reloaded.
+    pub fn force_reload(&mut self) -> bool {
+        self.last_mtime = None;
+        self.check_reload()
+    }
+
+    /// Whether this theme is loaded from a file (vs default).
+    pub fn has_file(&self) -> bool {
+        self.theme_file.is_some()
+    }
+
+    /// Get the theme file path (if loaded from a file).
+    pub fn file_path(&self) -> Option<&std::path::Path> {
+        self.theme_file.as_deref()
+    }
+
     /// Get a deterministic color for a nick by hashing it into the palette.
     pub fn nick_color(&self, nick: &str) -> Color {
         if self.nick_palette.is_empty() {

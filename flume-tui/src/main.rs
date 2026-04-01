@@ -403,8 +403,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Check if /theme was requested
                 if let Some(name) = app.theme_switch.take() {
-                    theme.switch_to(&name);
-                    app.system_message(&format!("Theme switched to '{}'", theme.name));
+                    if name == "__reload__" {
+                        if theme.has_file() {
+                            let old_name = theme.name.clone();
+                            if theme.force_reload() {
+                                app.system_message(&format!("Theme '{}' reloaded", old_name));
+                            } else {
+                                let path_str = theme.file_path()
+                                    .map(|p| p.display().to_string())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                app.system_message(&format!("Failed to reload theme (file: {})", path_str));
+                            }
+                        } else {
+                            app.system_message("No theme file to reload (using default)");
+                        }
+                    } else {
+                        let path = flume_core::config::themes_dir().join(format!("{}.toml", name));
+                        if path.exists() {
+                            theme.switch_to(&name);
+                            app.system_message(&format!("Theme switched to '{}'", theme.name));
+                        } else {
+                            app.system_message(&format!(
+                                "Theme '{}' not found at {}", name, path.display()
+                            ));
+                            app.system_message(&format!(
+                                "Copy theme files to: {}", flume_core::config::themes_dir().display()
+                            ));
+                        }
+                    }
                 }
 
                 // Check if /script was requested

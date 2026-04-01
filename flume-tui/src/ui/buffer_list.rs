@@ -16,14 +16,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Header
-    lines.push(Line::from(Span::styled(
-        format!(" {}", app.active_server_name()),
-        Style::default()
-            .fg(theme.title_bar_fg)
-            .add_modifier(Modifier::BOLD),
-    )));
-
     // Global flume buffer — always first
     if app.viewing_global {
         lines.push(Line::from(Span::styled(
@@ -38,6 +30,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             Style::default().fg(theme.buffer_list_fg),
         )));
     }
+
+    // Server header
+    lines.push(Line::from(Span::styled(
+        format!(" {}", app.active_server_name()),
+        Style::default()
+            .fg(theme.title_bar_fg)
+            .add_modifier(Modifier::BOLD),
+    )));
 
     // Buffer list — sorted alphabetically, server buffer first
     let mut sorted_buffers: Vec<&String> = ss.buffer_order.iter().collect();

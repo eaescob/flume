@@ -191,7 +191,7 @@ impl Default for CtcpConfig {
 fn default_nick() -> String { "flume_user".to_string() }
 fn default_realname() -> String { "Flume User".to_string() }
 fn default_username() -> String { "flume".to_string() }
-fn default_quit_message() -> String { "Flume IRC — https://github.com/FlumeIRC/flume".to_string() }
+fn default_quit_message() -> String { "Flume IRC — https://github.com/FlumeIRC/flume — #flume on Libera.Chat".to_string() }
 fn default_timestamp_format() -> String { "%H:%M:%S".to_string() }
 fn default_scrollback_lines() -> usize { 10000 }
 fn default_url_open_command() -> String {

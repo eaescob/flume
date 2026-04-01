@@ -15,6 +15,7 @@ const LOGO: &[&str] = &[
 ];
 
 const TAGLINE: &str = "Modern IRC for the terminal";
+const SUPPORT: &str = "#flume on Libera.Chat";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn render(frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -81,6 +82,19 @@ pub fn render(frame: &mut Frame, area: Rect, theme: &Theme) {
         Style::default()
             .fg(theme.inactive)
             .add_modifier(Modifier::DIM),
+    )));
+
+    // Support channel
+    lines.push(Line::from(""));
+    let support_x = if area.width as usize > SUPPORT.len() {
+        (area.width as usize - SUPPORT.len()) / 2
+    } else {
+        0
+    };
+    let pad = " ".repeat(support_x);
+    lines.push(Line::from(Span::styled(
+        format!("{}{}", pad, SUPPORT),
+        Style::default().fg(theme.inactive),
     )));
 
     // Pad remaining

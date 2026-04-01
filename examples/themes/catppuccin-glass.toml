@@ -16,6 +16,8 @@ status_bar_bg = "#181825"
 status_bar_fg = "#bac2de"
 input_bg = "#1e1e2e"
 input_fg = "#cdd6f4"
+buffer_list_bg = "#181825"
+buffer_list_fg = "#bac2de"
 
 # Buffer indicators
 active = "#89b4fa"

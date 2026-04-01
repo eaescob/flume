@@ -1,7 +1,7 @@
 class Flume < Formula
   desc "Modern terminal IRC client with scripting and LLM support"
   homepage "https://github.com/FlumeIRC/flume"
-  url "https://github.com/FlumeIRC/flume/archive/refs/tags/v1.0.0.tar.gz"
+  url "https://github.com/FlumeIRC/flume/archive/refs/tags/v1.1.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
   license "BSD-3-Clause"
 

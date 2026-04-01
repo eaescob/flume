@@ -7,7 +7,7 @@ This document covers how to publish Flume releases to each supported packaging s
 1. Update version in `Cargo.toml` (workspace-level `version` field)
 2. Update `doc/flume.1` date and version in the `.TH` line
 3. Run `cargo test` and `cargo clippy` — everything must pass
-4. Create a git tag: `git tag v1.0.0 && git push origin v1.0.0`
+4. Create a git tag: `git tag v1.1.0 && git push origin v1.1.0`
 5. Create a GitHub Release from the tag, attach pre-built binaries
 
 ## Building Release Binaries
@@ -45,12 +45,12 @@ cargo build --release -p flume-tui --features python
 
 1. Build the release and create a tarball of the source:
    ```sh
-   git archive --format=tar.gz --prefix=flume-1.0.0/ v1.0.0 > flume-1.0.0.tar.gz
+   git archive --format=tar.gz --prefix=flume-1.1.0/ v1.1.0 > flume-1.1.0.tar.gz
    ```
 
 2. Calculate the SHA256:
    ```sh
-   shasum -a 256 flume-1.0.0.tar.gz
+   shasum -a 256 flume-1.1.0.tar.gz
    ```
 
 3. Update `packaging/homebrew/flume.rb`:
@@ -61,7 +61,7 @@ cargo build --release -p flume-tui --features python
 4. Copy the updated formula to the tap repo and push:
    ```sh
    cp packaging/homebrew/flume.rb ../homebrew-tap/Formula/flume.rb
-   cd ../homebrew-tap && git add -A && git commit -m "flume 1.0.0" && git push
+   cd ../homebrew-tap && git add -A && git commit -m "flume 1.1.0" && git push
    ```
 
 5. Test:
@@ -102,7 +102,7 @@ cargo build --release -p flume-tui --features python
    cd /path/to/aur/flume
    cp /path/to/flume/packaging/aur/PKGBUILD .
    cp /path/to/flume/packaging/aur/.SRCINFO .
-   git add -A && git commit -m "Update to 1.0.0" && git push
+   git add -A && git commit -m "Update to 1.1.0" && git push
    ```
 
 ## FreeBSD Ports

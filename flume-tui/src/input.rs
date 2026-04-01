@@ -1342,32 +1342,57 @@ fn handle_server_command(args: &str, app: &mut App) {
 
     match subcmd.as_str() {
         "add" => {
-            // /server add <name> <address> [port] [-tls|-notls] [-autoconnect]
+            // /server add <name> <address> [port] [flags...]
+            // Flags: -tls, -notls, -autoconnect, -username <user>, -password <pass>, -nick <nick>
             if all_args.len() < 3 {
-                app.system_message("Usage: /server add <name> <address> [port] [-tls|-notls] [-autoconnect]");
+                app.system_message("Usage: /server add <name> <address> [port] [options]");
+                app.system_message("  Options: -tls -notls -autoconnect");
+                app.system_message("           -username <user> -password <pass> -nick <nick>");
                 return;
             }
             let name = all_args[1];
             let address = all_args[2];
 
-            // Parse positional and flags
             let mut port: Option<u16> = None;
             let mut force_tls: Option<bool> = None;
             let mut autoconnect = false;
+            let mut username: Option<String> = None;
+            let mut password: Option<String> = None;
+            let mut nick: Option<String> = None;
 
-            for arg in &all_args[3..] {
-                match *arg {
+            let mut i = 3;
+            while i < all_args.len() {
+                match all_args[i] {
                     "-tls" => force_tls = Some(true),
                     "-notls" => force_tls = Some(false),
                     "-autoconnect" => autoconnect = true,
+                    "-username" | "-user" => {
+                        i += 1;
+                        if i < all_args.len() {
+                            username = Some(all_args[i].to_string());
+                        }
+                    }
+                    "-password" | "-pass" => {
+                        i += 1;
+                        if i < all_args.len() {
+                            password = Some(all_args[i].to_string());
+                        }
+                    }
+                    "-nick" => {
+                        i += 1;
+                        if i < all_args.len() {
+                            nick = Some(all_args[i].to_string());
+                        }
+                    }
                     _ => {
                         if port.is_none() {
-                            if let Ok(p) = arg.parse::<u16>() {
+                            if let Ok(p) = all_args[i].parse::<u16>() {
                                 port = Some(p);
                             }
                         }
                     }
                 }
+                i += 1;
             }
 
             let port = port.unwrap_or(6697);
@@ -1376,6 +1401,9 @@ fn handle_server_command(args: &str, app: &mut App) {
                 entry.tls = tls;
             }
             entry.autoconnect = autoconnect;
+            entry.username = username;
+            entry.password = password;
+            entry.nick = nick;
 
             let tls_str = if entry.tls { "TLS" } else { "plain" };
             let auto_str = if autoconnect { ", autoconnect" } else { "" };
@@ -1532,7 +1560,7 @@ fn show_help(app: &mut App) {
     app.system_message("    /disconnect              — Disconnect active server");
     app.system_message("    /quit [message]          — Quit Flume");
     app.system_message("  Server management:");
-    app.system_message("    /server add <name> <addr> [port] [-tls|-notls] [-autoconnect]");
+    app.system_message("    /server add <name> <addr> [port] [-tls] [-autoconnect] [-username <u>] [-password <p>]");
     app.system_message("    /server remove <name>    — Remove a network");
     app.system_message("    /server list             — List configured networks");
     app.system_message("    /server set <n> <k> <v>  — Set a network field");
@@ -1690,7 +1718,7 @@ fn show_help_topic(topic: &str, app: &mut App) {
         "server" => {
             app.system_message("/server add|remove|list|set|connect|switch [args]");
             app.system_message("  Manage IRC network configurations.");
-            app.system_message("  add <name> <addr> [port] [-tls|-notls] [-autoconnect]");
+            app.system_message("  add <name> <addr> [port] [-tls|-notls] [-autoconnect] [-username <u>] [-password <p>] [-nick <n>]");
             app.system_message("  remove <name>    — remove a network");
             app.system_message("  list             — list configured networks");
             app.system_message("  set <n> <k> <v>  — set a network field");

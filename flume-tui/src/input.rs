@@ -1000,8 +1000,11 @@ async fn process_input(
             }
             "go" => {
                 if args.is_empty() {
-                    app.system_message("Usage: /go <name or number>");
+                    app.system_message("Usage: /go <name or number> (or /go flume for global buffer)");
+                } else if args == "flume" {
+                    app.viewing_global = true;
                 } else if let Ok(num) = args.parse::<usize>() {
+                    app.viewing_global = false;
                     // Jump by window number (1-indexed)
                     if num == 0 {
                         app.system_message("Window numbers start at 1");
@@ -1014,6 +1017,7 @@ async fn process_input(
                         }
                     }
                 } else {
+                    app.viewing_global = false;
                     // Jump by name — try exact match first, then substring
                     let target = args.to_lowercase();
                     if let Some(ss) = app.active_server_state_mut() {

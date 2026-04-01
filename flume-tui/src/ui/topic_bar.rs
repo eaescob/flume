@@ -8,6 +8,16 @@ use crate::app::App;
 use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if app.viewing_global {
+        let line = Line::from(Span::styled(
+            " flume — global message buffer",
+            Style::default().fg(theme.title_bar_fg),
+        ));
+        let bar = Paragraph::new(line).style(Style::default().bg(theme.title_bar_bg));
+        frame.render_widget(bar, area);
+        return;
+    }
+
     let topic_text = app
         .active_server_state()
         .and_then(|ss| {
@@ -17,7 +27,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .unwrap_or("");
 
     let display = if topic_text.is_empty() {
-        // No topic — show channel/server name
         match app.active_target() {
             Some(target) => format!(" {}", target),
             None => format!(" {}", app.active_server_name()),

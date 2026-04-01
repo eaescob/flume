@@ -354,6 +354,8 @@ pub struct App {
     pub generate_request: Option<GenerateRequest>,
     /// True while an LLM generation is in flight.
     pub generating: bool,
+    /// True when viewing the global flume buffer (/go flume).
+    pub viewing_global: bool,
     /// Interactive /generate init step (None = not in init flow).
     pub generate_init_step: Option<u8>,
     /// Active DCC transfers.
@@ -418,6 +420,7 @@ impl App {
             pending_generation: None,
             generate_request: None,
             generating: false,
+            viewing_global: false,
             generate_init_step: None,
             dcc_transfers: Vec::new(),
             dcc_command: None,
@@ -475,6 +478,9 @@ impl App {
     }
 
     pub fn active_messages(&self) -> &VecDeque<DisplayMessage> {
+        if self.viewing_global {
+            return &self.global_messages;
+        }
         self.active_server_state()
             .map(|s| &s.active_buf().messages)
             .unwrap_or(&self.global_messages)
@@ -623,17 +629,18 @@ impl App {
             highlight: false,
         };
 
+        // Always log to the global flume buffer
+        self.global_messages.push_back(msg.clone());
+        while self.global_messages.len() > self.scrollback_limit {
+            self.global_messages.pop_front();
+        }
+
+        // Also show in the active buffer for immediate visibility
         if let Some(ref server_name) = self.active_server.clone() {
             if let Some(ss) = self.servers.get_mut(server_name) {
                 let active_buf = ss.active_buffer.clone();
                 ss.add_message(&active_buf, msg, self.scrollback_limit);
-                return;
             }
-        }
-        // No active server — use global buffer
-        self.global_messages.push_back(msg);
-        while self.global_messages.len() > self.scrollback_limit {
-            self.global_messages.pop_front();
         }
     }
 

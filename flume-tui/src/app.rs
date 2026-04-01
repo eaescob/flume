@@ -998,43 +998,108 @@ impl App {
                         );
                     }
                     Command::Numeric { code, params } => {
-                        let whois_msg = |label: &str, text: &str| DisplayMessage {
+                        // Helper: labeled server message to server buffer
+                        let labeled = |label: &str, text: &str| DisplayMessage {
                             timestamp,
                             source: MessageSource::Server,
                             text: format!("[{}] {}", label, text),
                             highlight: false,
                         };
+                        // Helper: labeled server message to a specific buffer
+                        let labeled_sys = |text: String| DisplayMessage {
+                            timestamp,
+                            source: MessageSource::System,
+                            text,
+                            highlight: false,
+                        };
+                        // Shorthand for last param
+                        let last = || params.last().cloned().unwrap_or_default();
+                        let p = |i: usize| params.get(i).cloned().unwrap_or_default();
+
                         match *code {
-                            // RPL_UMODEIS (221) — our user modes
-                            221 => {
-                                let modes = params.get(1).cloned().unwrap_or_default();
-                                ss.user_modes = modes;
+                            // === Connection/Welcome ===
+                            1 => {
+                                // RPL_WELCOME
+                                ss.add_message("", labeled("welcome", &last()), scrollback);
                             }
-                            // --- WHOIS responses ---
-                            // RPL_WHOISUSER (311): nick user host * :realname
+                            2 => {
+                                // RPL_YOURHOST
+                                ss.add_message("", labeled("host", &last()), scrollback);
+                            }
+                            3 => {
+                                // RPL_CREATED
+                                ss.add_message("", labeled("created", &last()), scrollback);
+                            }
+                            4 => {
+                                // RPL_MYINFO: server version usermodes chanmodes
+                                let srv = p(1);
+                                let ver = p(2);
+                                ss.add_message("", labeled("server", &format!("{} ({})", srv, ver)), scrollback);
+                            }
+                            5 => {
+                                // RPL_ISUPPORT — silently consumed (tokens like CHANTYPES, PREFIX, etc.)
+                                // Servers send multiple 005s; not useful to display
+                            }
+
+                            // === MOTD ===
+                            375 => {
+                                // RPL_MOTDSTART
+                                ss.add_message("", labeled("motd", &last()), scrollback);
+                            }
+                            372 => {
+                                // RPL_MOTD — strip leading "- " prefix that servers add
+                                let line = last();
+                                let clean = line.strip_prefix("- ").unwrap_or(&line);
+                                ss.add_message("", labeled("motd", clean), scrollback);
+                            }
+                            376 | 422 => {
+                                // RPL_ENDOFMOTD / ERR_NOMOTD — silenced
+                            }
+
+                            // === LUSERS (server stats) ===
+                            251..=255 => {
+                                ss.add_message("", labeled("stats", &last()), scrollback);
+                            }
+                            265 | 266 => {
+                                // Local/global users count
+                                ss.add_message("", labeled("stats", &last()), scrollback);
+                            }
+
+                            // === AWAY status ===
+                            301 => {
+                                // RPL_AWAY: nick :away message (also in WHOIS)
+                                let nick = p(1);
+                                let msg = p(2);
+                                ss.add_message("", labeled("away", &format!("{} — {}", nick, msg)), scrollback);
+                            }
+                            305 => {
+                                // RPL_UNAWAY
+                                ss.add_message("", labeled("away", "You are no longer marked as away"), scrollback);
+                            }
+                            306 => {
+                                // RPL_NOWAWAY
+                                ss.add_message("", labeled("away", "You are now marked as away"), scrollback);
+                            }
+
+                            // === WHOIS ===
                             311 => {
-                                let nick = params.get(1).cloned().unwrap_or_default();
-                                let user = params.get(2).cloned().unwrap_or_default();
-                                let host = params.get(3).cloned().unwrap_or_default();
-                                let realname = params.get(5).cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("whois",
+                                let nick = p(1);
+                                let user = p(2);
+                                let host = p(3);
+                                let realname = p(5);
+                                ss.add_message("", labeled("whois",
                                     &format!("{} ({}@{}) — {}", nick, user, host, realname)), scrollback);
                             }
-                            // RPL_WHOISSERVER (312): nick server :server info
                             312 => {
-                                let server = params.get(2).cloned().unwrap_or_default();
-                                let info = params.get(3).cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("server",
-                                    &format!("{} — {}", server, info)), scrollback);
+                                let server = p(2);
+                                let info = p(3);
+                                ss.add_message("", labeled("server", &format!("{} — {}", server, info)), scrollback);
                             }
-                            // RPL_WHOISOPERATOR (313): nick :is an IRC operator
                             313 => {
-                                let text = params.get(2).cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("oper", &text), scrollback);
+                                ss.add_message("", labeled("oper", &last()), scrollback);
                             }
-                            // RPL_WHOISIDLE (317): nick seconds signon :seconds idle, signon time
                             317 => {
-                                let idle_secs: u64 = params.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                                let idle_secs: u64 = p(2).parse().unwrap_or(0);
                                 let idle_str = if idle_secs >= 3600 {
                                     format!("{}h {}m", idle_secs / 3600, (idle_secs % 3600) / 60)
                                 } else if idle_secs >= 60 {
@@ -1042,53 +1107,78 @@ impl App {
                                 } else {
                                     format!("{}s", idle_secs)
                                 };
-                                ss.add_message("", whois_msg("idle", &idle_str), scrollback);
+                                ss.add_message("", labeled("idle", &idle_str), scrollback);
                             }
-                            // RPL_ENDOFWHOIS (318) — end marker, skip
-                            318 => {}
-                            // RPL_WHOISCHANNELS (319): nick :channels
+                            318 | 369 => {
+                                // RPL_ENDOFWHOIS / RPL_ENDOFWHOWAS — silenced
+                            }
                             319 => {
-                                let channels = params.get(2).cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("channels", &channels), scrollback);
+                                ss.add_message("", labeled("channels", &p(2)), scrollback);
                             }
-                            // RPL_WHOISACCOUNT (330): nick account :is logged in as
                             330 => {
-                                let account = params.get(2).cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("account", &account), scrollback);
+                                ss.add_message("", labeled("account", &p(2)), scrollback);
                             }
-                            // RPL_AWAY (301): nick :away message
-                            301 => {
-                                let away_msg = params.get(2).cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("away", &away_msg), scrollback);
-                            }
-                            // RPL_WHOISHOST (378): nick :is connecting from ...
                             378 => {
-                                let text = params.last().cloned().unwrap_or_default();
-                                ss.add_message("", whois_msg("host", &text), scrollback);
+                                ss.add_message("", labeled("host", &last()), scrollback);
                             }
-                            // RPL_WHOISSECURE (671): nick :is using a secure connection
                             671 => {
-                                ss.add_message("", whois_msg("secure", "using TLS"), scrollback);
+                                ss.add_message("", labeled("secure", "using TLS"), scrollback);
                             }
-                            // RPL_TOPIC (332)
+
+                            // === USER modes ===
+                            221 => {
+                                let modes = p(1);
+                                ss.user_modes = modes;
+                            }
+
+                            // === TOPIC ===
                             332 => {
-                                let channel = params.get(1).cloned().unwrap_or_default();
-                                let topic = params.get(2).cloned().unwrap_or_default();
-                                ss.add_message(
-                                    &channel,
-                                    DisplayMessage {
-                                        timestamp,
-                                        source: MessageSource::System,
-                                        text: format!("Topic: {}", topic),
-                                        highlight: false,
-                                    },
-                                    scrollback,
-                                );
+                                let channel = p(1);
+                                let topic = p(2);
+                                ss.add_message(&channel, labeled_sys(format!("Topic: {}", topic)), scrollback);
                             }
-                            // RPL_NAMREPLY (353) — nick list for a channel
+                            333 => {
+                                // RPL_TOPICWHOTIME: channel nick!user@host timestamp
+                                let channel = p(1);
+                                let setter = p(2);
+                                let setter_nick = setter.split('!').next().unwrap_or(&setter);
+                                let ts: i64 = p(3).parse().unwrap_or(0);
+                                let time_str = if ts > 0 {
+                                    chrono::DateTime::from_timestamp(ts, 0)
+                                        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                                        .unwrap_or_default()
+                                } else {
+                                    String::new()
+                                };
+                                ss.add_message(&channel,
+                                    labeled_sys(format!("Set by {} on {}", setter_nick, time_str)), scrollback);
+                            }
+
+                            // === CHANNEL MODE ===
+                            324 => {
+                                // RPL_CHANNELMODEIS: channel modes [params]
+                                let channel = p(1);
+                                let modes = params[2..].join(" ");
+                                ss.add_message(&channel,
+                                    labeled_sys(format!("Channel modes: {}", modes)), scrollback);
+                            }
+                            329 => {
+                                // RPL_CREATIONTIME: channel timestamp
+                                let channel = p(1);
+                                let ts: i64 = p(2).parse().unwrap_or(0);
+                                if ts > 0 {
+                                    if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+                                        ss.add_message(&channel,
+                                            labeled_sys(format!("Created: {}", dt.format("%Y-%m-%d %H:%M"))),
+                                            scrollback);
+                                    }
+                                }
+                            }
+
+                            // === NAMES ===
                             353 => {
-                                let channel = params.get(2).cloned().unwrap_or_default();
-                                let nicks_str = params.get(3).cloned().unwrap_or_default();
+                                let channel = p(2);
+                                let nicks_str = p(3);
                                 ss.ensure_buffer(&channel);
                                 if let Some(buf) = ss.buffers.get_mut(&channel) {
                                     for entry in nicks_str.split_whitespace() {
@@ -1097,21 +1187,134 @@ impl App {
                                     }
                                 }
                             }
-                            // RPL_ENDOFNAMES (366) — end of nick list
-                            366 => {}
+                            366 => {} // RPL_ENDOFNAMES
+
+                            // === WHO ===
+                            352 => {
+                                // RPL_WHOREPLY: channel user host server nick H|G[@+] :hopcount realname
+                                let channel = p(1);
+                                let user = p(2);
+                                let host = p(3);
+                                let nick = p(5);
+                                let flags = p(6);
+                                let realname = last();
+                                // Strip hopcount from realname
+                                let rn = realname.split_once(' ').map(|(_, r)| r).unwrap_or(&realname);
+                                ss.add_message(&channel, labeled("who",
+                                    &format!("{} ({}@{}) [{}] {}", nick, user, host, flags, rn)), scrollback);
+                            }
+                            315 => {} // RPL_ENDOFWHO
+
+                            // === LIST ===
+                            321 => {} // RPL_LISTSTART — silenced
+                            322 => {
+                                // RPL_LIST: channel users :topic
+                                let channel = p(1);
+                                let users = p(2);
+                                let topic = last();
+                                ss.add_message("", labeled("list",
+                                    &format!("{} ({} users) {}", channel, users, topic)), scrollback);
+                            }
+                            323 => {} // RPL_LISTEND
+
+                            // === INVITE ===
+                            341 => {
+                                let nick = p(1);
+                                let channel = p(2);
+                                ss.add_message("", labeled("invite",
+                                    &format!("Inviting {} to {}", nick, channel)), scrollback);
+                            }
+
+                            // === BAN LIST ===
+                            367 => {
+                                // RPL_BANLIST: channel banmask setter timestamp
+                                let channel = p(1);
+                                let mask = p(2);
+                                let setter = p(3).split('!').next().unwrap_or("").to_string();
+                                ss.add_message(&channel, labeled("ban",
+                                    &format!("{} (by {})", mask, setter)), scrollback);
+                            }
+                            368 => {} // RPL_ENDOFBANLIST
+
+                            // === VERSION ===
+                            351 => {
+                                ss.add_message("", labeled("version", &last()), scrollback);
+                            }
+
+                            // === INFO ===
+                            371 => {
+                                let line = last();
+                                let clean = line.strip_prefix("- ").unwrap_or(&line);
+                                ss.add_message("", labeled("info", clean), scrollback);
+                            }
+                            374 => {} // RPL_ENDOFINFO
+
+                            // === Error numerics ===
+                            401 => {
+                                // ERR_NOSUCHNICK
+                                ss.add_message("", labeled("error", &format!("{}: no such nick/channel", p(1))), scrollback);
+                            }
+                            403 => {
+                                ss.add_message("", labeled("error", &format!("{}: no such channel", p(1))), scrollback);
+                            }
+                            404 => {
+                                ss.add_message("", labeled("error", &format!("{}: cannot send to channel", p(1))), scrollback);
+                            }
+                            421 => {
+                                ss.add_message("", labeled("error", &format!("unknown command: {}", p(1))), scrollback);
+                            }
+                            432 => {
+                                ss.add_message("", labeled("error", &format!("erroneous nickname: {}", p(1))), scrollback);
+                            }
+                            433 => {
+                                // ERR_NICKNAMEINUSE — critical, needs visibility
+                                ss.add_message("", labeled("error",
+                                    &format!("nickname '{}' is already in use", p(1))), scrollback);
+                            }
+                            441 => {
+                                ss.add_message("", labeled("error",
+                                    &format!("{} is not on {}", p(1), p(2))), scrollback);
+                            }
+                            442 => {
+                                ss.add_message("", labeled("error",
+                                    &format!("you're not on {}", p(1))), scrollback);
+                            }
+                            443 => {
+                                ss.add_message("", labeled("error",
+                                    &format!("{} is already on {}", p(1), p(2))), scrollback);
+                            }
+                            461 => {
+                                ss.add_message("", labeled("error",
+                                    &format!("{}: not enough parameters", p(1))), scrollback);
+                            }
+                            462 => {
+                                ss.add_message("", labeled("error", "already registered"), scrollback);
+                            }
+                            // ERR_CHANNELISFULL, UNKNOWNMODE, INVITEONLYCHAN, BANNEDFROMCHAN, BADCHANNELKEY
+                            471 => {
+                                ss.add_message("", labeled("error", &format!("{}: channel is full", p(1))), scrollback);
+                            }
+                            473 => {
+                                ss.add_message("", labeled("error", &format!("{}: invite only", p(1))), scrollback);
+                            }
+                            474 => {
+                                ss.add_message("", labeled("error", &format!("{}: banned from channel", p(1))), scrollback);
+                            }
+                            475 => {
+                                ss.add_message("", labeled("error", &format!("{}: bad channel key", p(1))), scrollback);
+                            }
+                            482 => {
+                                ss.add_message("", labeled("error",
+                                    &format!("{}: you're not a channel operator", p(1))), scrollback);
+                            }
+
+                            // === Fallback for unhandled numerics ===
                             _ => {
-                                let text = params.last().cloned().unwrap_or_default();
+                                let text = last();
                                 if !text.is_empty() {
-                                    ss.add_message(
-                                        "",
-                                        DisplayMessage {
-                                            timestamp,
-                                            source: MessageSource::Server,
-                                            text,
-                                            highlight: false,
-                                        },
-                                        scrollback,
-                                    );
+                                    // Error range (400-599) gets [error] label
+                                    let label = if *code >= 400 && *code < 600 { "error" } else { "server" };
+                                    ss.add_message("", labeled(label, &text), scrollback);
                                 }
                             }
                         }

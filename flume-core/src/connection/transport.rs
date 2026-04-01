@@ -56,6 +56,9 @@ pub async fn connect_tls(address: &str, port: u16) -> Result<Transport, Connecti
         .await
         .map_err(ConnectionError::Tcp)?;
 
+    // Ensure the ring crypto provider is installed (rustls 0.23 requires this)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let mut root_store = rustls::RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 

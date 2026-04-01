@@ -7,9 +7,17 @@ use flume_core::config::general::NotificationConfig;
 use flume_core::config::keybindings::KeybindingMode;
 use flume_core::config::IrcConfig;
 use flume_core::event::{ConnectionState, IrcEvent, UserCommand};
-use flume_core::format::format_string;
+use flume_core::format::{format_string, format_regex_captures};
 use flume_core::fmt_vars;
 use flume_core::irc::command::Command;
+
+/// A compiled snotice routing rule.
+pub struct CompiledSnoticeRule {
+    pub regex: regex::Regex,
+    pub format: Option<String>,
+    pub buffer: Option<String>,
+    pub suppress: bool,
+}
 
 use flume_core::dcc::{DccTransfer, DccTransferState};
 
@@ -343,6 +351,8 @@ pub struct App {
     pub show_hostmask_on_join: bool,
     /// Configurable display format strings.
     pub formats: FormatsConfig,
+    /// Compiled snotice regex rules.
+    pub snotice_rules: Vec<CompiledSnoticeRule>,
     /// Active keybinding mode.
     pub keybinding_mode: KeybindingMode,
     /// Vi sub-mode (Normal/Insert). Only used when keybinding_mode == Vi.
@@ -398,6 +408,19 @@ impl App {
         show_hostmask_on_join: bool,
         formats: FormatsConfig,
     ) -> Self {
+        // Compile snotice regex rules
+        let snotice_rules: Vec<CompiledSnoticeRule> = formats
+            .snotice
+            .iter()
+            .filter_map(|rule| {
+                regex::Regex::new(&rule.pattern).ok().map(|re| CompiledSnoticeRule {
+                    regex: re,
+                    format: rule.format.clone(),
+                    buffer: rule.buffer.clone(),
+                    suppress: rule.suppress,
+                })
+            })
+            .collect();
         App {
             servers: HashMap::new(),
             active_server: None,
@@ -421,6 +444,7 @@ impl App {
             show_join_part,
             show_hostmask_on_join,
             formats,
+            snotice_rules,
             keybinding_mode,
             vi_mode: ViMode::Insert,
             vi_pending_op: None,
@@ -1487,19 +1511,52 @@ impl App {
                         // Server notices (from server or no nick) go to server buffer
                         // User notices go to the appropriate buffer
                         if nick.is_empty() || nick.contains('.') || *target == "*" {
-                            // Server notice
-                            let vars = fmt_vars!("text" => text.as_str());
-                            let formatted = format_string(&self.formats.server_notice, &vars);
-                            ss.add_message(
-                                "",
-                                DisplayMessage {
-                                    timestamp,
-                                    source: MessageSource::Server,
-                                    text: formatted,
-                                    highlight: false,
-                                },
-                                scrollback,
-                            );
+                            // Server notice — check snotice routing rules
+                            let mut handled = false;
+                            for rule in &self.snotice_rules {
+                                if let Some(caps) = rule.regex.captures(text) {
+                                    if rule.suppress {
+                                        handled = true;
+                                        break;
+                                    }
+                                    let formatted = match &rule.format {
+                                        Some(fmt) => format_regex_captures(fmt, &caps),
+                                        None => text.to_string(),
+                                    };
+                                    let buf_name = rule.buffer.as_deref().unwrap_or("");
+                                    // Auto-create snotice buffer if needed
+                                    if !buf_name.is_empty() {
+                                        ss.ensure_buffer(buf_name);
+                                    }
+                                    ss.add_message(
+                                        buf_name,
+                                        DisplayMessage {
+                                            timestamp,
+                                            source: MessageSource::Server,
+                                            text: formatted,
+                                            highlight: false,
+                                        },
+                                        scrollback,
+                                    );
+                                    handled = true;
+                                    break;
+                                }
+                            }
+                            if !handled {
+                                // Default server notice format
+                                let vars = fmt_vars!("text" => text.as_str());
+                                let formatted = format_string(&self.formats.server_notice, &vars);
+                                ss.add_message(
+                                    "",
+                                    DisplayMessage {
+                                        timestamp,
+                                        source: MessageSource::Server,
+                                        text: formatted,
+                                        highlight: false,
+                                    },
+                                    scrollback,
+                                );
+                            }
                         } else {
                             // User notice
                             let buffer = if target.starts_with('#') {

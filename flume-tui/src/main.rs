@@ -113,7 +113,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut llm_client: Option<std::sync::Arc<flume_core::llm::LlmClient>> = None;
 
     // Channel for receiving LLM generation results
-    let (gen_tx, mut gen_rx) = mpsc::channel::<Result<(GenerationKind, Option<String>, String, String), String>>(1);
+    // (kind, language, code, description, user_name)
+    let (gen_tx, mut gen_rx) = mpsc::channel::<Result<(GenerationKind, Option<String>, String, String, Option<String>), String>>(1);
 
     // Channel for DCC events (progress, completion, chat messages)
     let (dcc_tx, mut dcc_rx) = mpsc::channel::<DccEvent>(256);
@@ -499,6 +500,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         req.language,
                                         code,
                                         req.description,
+                                        req.name,
                                     ))).await;
                                 }
                                 Err(e) => {
@@ -573,13 +575,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(result) = gen_rx.recv() => {
                 app.generating = false;
                 match result {
-                    Ok((kind, language, content, description)) => {
+                    Ok((kind, language, content, description, user_name)) => {
                         let ext = match kind {
                             GenerationKind::Script => language.as_deref().unwrap_or("lua"),
                             GenerationKind::Theme => "toml",
                             GenerationKind::Layout => "toml",
                         };
-                        let name = slugify_name(&description, ext);
+                        let name = match user_name {
+                            Some(n) => format!("{}.{}", n, ext),
+                            None => slugify_name(&description, ext),
+                        };
                         app.pending_generation = Some(PendingGeneration {
                             kind,
                             language,

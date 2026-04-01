@@ -23,6 +23,10 @@ pub struct Theme {
     pub input_bg: Color,
     pub input_fg: Color,
 
+    // ── Buffer list ──
+    pub buffer_list_bg: Color,
+    pub buffer_list_fg: Color,
+
     // ── Nick list ──
     pub nick_list_bg: Color,
     pub nick_list_fg: Color,
@@ -72,6 +76,9 @@ impl Theme {
             status_bar_fg: resolve(&e.status_bar_fg),
             input_bg: resolve(&e.input_bg),
             input_fg: resolve(&e.input_fg),
+            // Buffer list defaults to title bar colors if not specified
+            buffer_list_bg: resolve(&e.title_bar_bg),
+            buffer_list_fg: resolve(&e.status_bar_fg),
             nick_list_bg: resolve(&e.nick_list_bg),
             nick_list_fg: resolve(&e.nick_list_fg),
             nick_list_op: resolve(&e.nick_list_op),
@@ -161,6 +168,8 @@ impl Theme {
                 self.status_bar_fg = reloaded.status_bar_fg;
                 self.input_bg = reloaded.input_bg;
                 self.input_fg = reloaded.input_fg;
+                self.buffer_list_bg = reloaded.buffer_list_bg;
+                self.buffer_list_fg = reloaded.buffer_list_fg;
                 self.nick_list_bg = reloaded.nick_list_bg;
                 self.nick_list_fg = reloaded.nick_list_fg;
                 self.nick_list_op = reloaded.nick_list_op;

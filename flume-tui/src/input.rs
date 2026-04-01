@@ -2191,6 +2191,26 @@ fn handle_generate_init_input(text: &str, step: u8, app: &mut App) {
     }
 }
 
+/// Parse --name <name> from generate args, returning (name, remaining description).
+fn parse_generate_name(args: &str) -> (Option<String>, String) {
+    let words: Vec<&str> = args.split_whitespace().collect();
+    let mut name: Option<String> = None;
+    let mut desc_words: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i] == "--name" {
+            i += 1;
+            if i < words.len() {
+                name = Some(words[i].to_string());
+            }
+        } else {
+            desc_words.push(words[i]);
+        }
+        i += 1;
+    }
+    (name, desc_words.join(" "))
+}
+
 fn handle_generate_command(args: &str, app: &mut App) {
     let parts: Vec<&str> = args.splitn(2, ' ').collect();
     let subcmd = parts.first().copied().unwrap_or("");
@@ -2225,18 +2245,32 @@ fn handle_generate_command(args: &str, app: &mut App) {
                 return;
             }
             let rest = parts.get(1).copied().unwrap_or("").trim();
-            let (language, description) = if rest.starts_with("--python ") || rest.starts_with("--py ") {
-                let desc = rest.split_once(' ').map(|x| x.1).unwrap_or("");
-                (Some("python".to_string()), desc.to_string())
-            } else if rest.starts_with("--lua ") {
-                let desc = rest.split_once(' ').map(|x| x.1).unwrap_or("");
-                (Some("lua".to_string()), desc.to_string())
-            } else {
-                (Some("lua".to_string()), rest.to_string())
-            };
+
+            // Parse flags: --lua, --python, --name <name>
+            let mut language = Some("lua".to_string());
+            let mut gen_name: Option<String> = None;
+            let mut desc_words: Vec<&str> = Vec::new();
+
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            let mut i = 0;
+            while i < words.len() {
+                match words[i] {
+                    "--python" | "--py" => language = Some("python".to_string()),
+                    "--lua" => language = Some("lua".to_string()),
+                    "--name" => {
+                        i += 1;
+                        if i < words.len() {
+                            gen_name = Some(words[i].to_string());
+                        }
+                    }
+                    _ => desc_words.push(words[i]),
+                }
+                i += 1;
+            }
+            let description = desc_words.join(" ");
 
             if description.is_empty() {
-                app.system_message("Usage: /generate script [--lua|--python] <description>");
+                app.system_message("Usage: /generate script [--lua|--python] [--name <name>] <description>");
                 return;
             }
 
@@ -2244,6 +2278,7 @@ fn handle_generate_command(args: &str, app: &mut App) {
                 kind: GenerationKind::Script,
                 language,
                 description,
+                name: gen_name,
             });
             app.system_message("Generating script...");
         }
@@ -2252,15 +2287,17 @@ fn handle_generate_command(args: &str, app: &mut App) {
                 app.system_message("Generation already in progress...");
                 return;
             }
-            let description = parts.get(1).copied().unwrap_or("").trim().to_string();
+            let rest = parts.get(1).copied().unwrap_or("").trim();
+            let (gen_name, description) = parse_generate_name(rest);
             if description.is_empty() {
-                app.system_message("Usage: /generate theme <description>");
+                app.system_message("Usage: /generate theme [--name <name>] <description>");
                 return;
             }
             app.generate_request = Some(GenerateRequest {
                 kind: GenerationKind::Theme,
                 language: None,
                 description,
+                name: gen_name,
             });
             app.system_message("Generating theme...");
         }
@@ -2269,15 +2306,17 @@ fn handle_generate_command(args: &str, app: &mut App) {
                 app.system_message("Generation already in progress...");
                 return;
             }
-            let description = parts.get(1).copied().unwrap_or("").trim().to_string();
+            let rest = parts.get(1).copied().unwrap_or("").trim();
+            let (gen_name, description) = parse_generate_name(rest);
             if description.is_empty() {
-                app.system_message("Usage: /generate layout <description>");
+                app.system_message("Usage: /generate layout [--name <name>] <description>");
                 return;
             }
             app.generate_request = Some(GenerateRequest {
                 kind: GenerationKind::Layout,
                 language: None,
                 description,
+                name: gen_name,
             });
             app.system_message("Generating layout...");
         }

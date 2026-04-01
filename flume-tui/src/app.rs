@@ -86,6 +86,7 @@ pub struct GenerateRequest {
     pub kind: GenerationKind,
     pub language: Option<String>,
     pub description: String,
+    pub name: Option<String>,
 }
 
 /// A single message buffer (channel, PM, or server notices).

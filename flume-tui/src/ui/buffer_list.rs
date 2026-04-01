@@ -9,7 +9,7 @@ use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let Some(ss) = app.active_server_state() else {
-        let paragraph = Paragraph::new("").style(Style::default().bg(theme.title_bar_bg));
+        let paragraph = Paragraph::new("").style(Style::default().bg(theme.buffer_list_bg));
         frame.render_widget(paragraph, area);
         return;
     };
@@ -68,7 +68,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         } else {
             (
                 format!(" {}", display),
-                Style::default().fg(theme.inactive),
+                Style::default().fg(theme.buffer_list_fg),
             )
         };
 
@@ -80,6 +80,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         lines.push(Line::from(""));
     }
 
-    let paragraph = Paragraph::new(lines).style(Style::default().bg(theme.title_bar_bg));
+    let paragraph = Paragraph::new(lines).style(Style::default().bg(theme.buffer_list_bg));
     frame.render_widget(paragraph, area);
 }

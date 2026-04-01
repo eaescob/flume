@@ -19,94 +19,99 @@ use crate::split::SplitDirection;
 use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
-    // Weechat-style layout:
-    //   topic_bar (1 line)
-    //   main area: [buffer_list | chat | nick_list]
-    //   status_bar (1 line)
-    //   input_line (1 line)
-    let chunks = Layout::default()
+    // Layout:
+    //   [buffer_list (full height) | center area | nick_list (full height)]
+    //   status_bar (1 line, full width)
+    //   input_line (1 line, full width)
+    let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // topic bar
-            Constraint::Min(1),    // main area
-            Constraint::Length(1),  // status bar
-            Constraint::Length(1),  // input line
+            Constraint::Min(1),    // main area (buffer list + center + nick list)
+            Constraint::Length(1), // status bar
+            Constraint::Length(1), // input line
         ])
         .split(frame.area());
 
-    topic_bar::render(frame, chunks[0], app, theme);
-
-    // Main area: buffer list (left) + chat (center) + nick list (right)
+    let show_buffer_list = app.active_server_state().is_some();
     let show_nick_list = app
         .active_server_state()
         .map(|ss| ss.active_buffer.starts_with('#') && !ss.active_buf().nicks.is_empty())
         .unwrap_or(false);
 
-    let show_buffer_list = app.active_server_state().is_some();
+    // Build horizontal columns for main area
+    let mut col_constraints = Vec::new();
+    if show_buffer_list {
+        col_constraints.push(Constraint::Length(20));
+    }
+    col_constraints.push(Constraint::Min(1)); // center (topic + chat)
+    if show_nick_list && app.pending_generation.is_none() && app.split.is_none() {
+        col_constraints.push(Constraint::Length(18));
+    }
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(col_constraints)
+        .split(outer[0]);
+
+    let mut col_idx = 0;
+
+    // Buffer list (left column, full height)
+    if show_buffer_list {
+        buffer_list::render(frame, columns[col_idx], app, theme);
+        col_idx += 1;
+    }
+
+    let center_area = columns[col_idx];
+    col_idx += 1;
+
+    // Nick list (right column, full height)
+    if show_nick_list && app.pending_generation.is_none() && app.split.is_none() {
+        nick_list::render(frame, columns[col_idx], app, theme);
+    }
+
+    // Center area: topic bar (1 line) + chat/split/preview
+    let center = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // topic bar
+            Constraint::Min(1),   // chat area
+        ])
+        .split(center_area);
+
+    topic_bar::render(frame, center[0], app, theme);
 
     if let Some(ref gen) = app.pending_generation {
-        // Generation preview: buffer_list | chat | separator | preview
-        let main_constraints = if show_buffer_list {
-            vec![
-                Constraint::Length(20),
-                Constraint::Percentage(50),
-                Constraint::Length(1),
-                Constraint::Percentage(50),
-            ]
-        } else {
-            vec![
-                Constraint::Percentage(50),
-                Constraint::Length(1),
-                Constraint::Percentage(50),
-                Constraint::Length(0),
-            ]
-        };
-        let main_chunks = Layout::default()
+        // Generation preview: chat | separator | preview
+        let preview_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(main_constraints)
-            .split(chunks[1]);
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Length(1),
+                Constraint::Percentage(50),
+            ])
+            .split(center[1]);
 
-        if show_buffer_list {
-            buffer_list::render(frame, main_chunks[0], app, theme);
-            chat_buffer::render(frame, main_chunks[1], app, theme);
-            render_separator(frame, main_chunks[2], SplitDirection::Vertical, theme);
-            render_generation_preview(frame, main_chunks[3], gen, theme);
-        } else {
-            chat_buffer::render(frame, main_chunks[0], app, theme);
-            render_separator(frame, main_chunks[1], SplitDirection::Vertical, theme);
-            render_generation_preview(frame, main_chunks[2], gen, theme);
-        }
+        chat_buffer::render(frame, preview_chunks[0], app, theme);
+        render_separator(frame, preview_chunks[1], SplitDirection::Vertical, theme);
+        render_generation_preview(frame, preview_chunks[2], gen, theme);
     } else if let Some(ref split) = app.split {
-        // Split mode: buffer_list | chat1 | sep | chat2
+        // Split mode: chat1 | separator | chat2
         let direction = match split.direction {
             SplitDirection::Vertical => Direction::Horizontal,
             SplitDirection::Horizontal => Direction::Vertical,
         };
 
-        let mut constraints = Vec::new();
-        if show_buffer_list && direction == Direction::Horizontal {
-            constraints.push(Constraint::Length(20)); // buffer list
-        }
-        constraints.push(Constraint::Percentage(split.ratio));
-        constraints.push(Constraint::Length(1)); // separator
-        constraints.push(Constraint::Percentage(100 - split.ratio));
-
-        let main_chunks = Layout::default()
+        let split_chunks = Layout::default()
             .direction(direction)
-            .constraints(constraints)
-            .split(chunks[1]);
+            .constraints([
+                Constraint::Percentage(split.ratio),
+                Constraint::Length(1),
+                Constraint::Percentage(100 - split.ratio),
+            ])
+            .split(center[1]);
 
-        let (chat1_idx, sep_idx, chat2_idx) = if show_buffer_list
-            && matches!(split.direction, SplitDirection::Vertical)
-        {
-            buffer_list::render(frame, main_chunks[0], app, theme);
-            (1, 2, 3)
-        } else {
-            (0, 1, 2)
-        };
-
-        chat_buffer::render(frame, main_chunks[chat1_idx], app, theme);
-        render_separator(frame, main_chunks[sep_idx], split.direction, theme);
+        chat_buffer::render(frame, split_chunks[0], app, theme);
+        render_separator(frame, split_chunks[1], split.direction, theme);
 
         let empty = VecDeque::new();
         let messages = app.split_messages().unwrap_or(&empty);
@@ -114,7 +119,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         let search = app.split_search();
         chat_buffer::render_buffer(
             frame,
-            main_chunks[chat2_idx],
+            split_chunks[2],
             messages,
             scroll,
             search,
@@ -122,35 +127,13 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
             theme,
         );
     } else {
-        // Normal mode: buffer_list | chat | nick_list
-        let mut constraints = Vec::new();
-        if show_buffer_list {
-            constraints.push(Constraint::Length(20)); // buffer list
-        }
-        constraints.push(Constraint::Min(1)); // chat
-        if show_nick_list {
-            constraints.push(Constraint::Length(18)); // nick list
-        }
-
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(chunks[1]);
-
-        let mut idx = 0;
-        if show_buffer_list {
-            buffer_list::render(frame, main_chunks[idx], app, theme);
-            idx += 1;
-        }
-        chat_buffer::render(frame, main_chunks[idx], app, theme);
-        idx += 1;
-        if show_nick_list {
-            nick_list::render(frame, main_chunks[idx], app, theme);
-        }
+        // Normal: just chat
+        chat_buffer::render(frame, center[1], app, theme);
     }
 
-    status_bar::render(frame, chunks[2], app, theme);
-    input_line::render(frame, chunks[3], app, theme);
+    // Status bar and input (full width)
+    status_bar::render(frame, outer[1], app, theme);
+    input_line::render(frame, outer[2], app, theme);
 }
 
 /// Render a separator line between split panes.

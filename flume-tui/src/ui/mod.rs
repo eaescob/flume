@@ -2,6 +2,7 @@ pub mod buffer_list;
 pub mod chat_buffer;
 pub mod input_line;
 pub mod nick_list;
+pub mod splash;
 pub mod status_bar;
 pub mod title_bar;
 pub mod topic_bar;
@@ -31,6 +32,14 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
             Constraint::Length(1), // input line
         ])
         .split(frame.area());
+
+    // Show splash screen when no servers are connected
+    if app.servers.is_empty() {
+        splash::render(frame, outer[0], theme);
+        status_bar::render(frame, outer[1], app, theme);
+        input_line::render(frame, outer[2], app, theme);
+        return;
+    }
 
     let show_buffer_list = app.active_server_state().is_some();
     let show_nick_list = app

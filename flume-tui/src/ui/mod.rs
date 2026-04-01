@@ -33,8 +33,8 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         ])
         .split(frame.area());
 
-    // Show splash screen when no servers and no messages yet
-    if app.servers.is_empty() && app.active_messages().is_empty() {
+    // Show splash screen until first input or server connection
+    if app.show_splash && app.servers.is_empty() {
         splash::render(frame, outer[0], theme);
         status_bar::render(frame, outer[1], app, theme);
         input_line::render(frame, outer[2], app, theme);

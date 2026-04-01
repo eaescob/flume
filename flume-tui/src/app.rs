@@ -356,6 +356,8 @@ pub struct App {
     pub generating: bool,
     /// True when viewing the global flume buffer (/go flume).
     pub viewing_global: bool,
+    /// True until user submits first input or a server connects.
+    pub show_splash: bool,
     /// Interactive /generate init step (None = not in init flow).
     pub generate_init_step: Option<u8>,
     /// Active DCC transfers.
@@ -421,6 +423,7 @@ impl App {
             generate_request: None,
             generating: false,
             viewing_global: false,
+            show_splash: true,
             generate_init_step: None,
             dcc_transfers: Vec::new(),
             dcc_command: None,
@@ -670,6 +673,7 @@ impl App {
         self.history_index = None;
         self.input.clear();
         self.cursor_pos = 0;
+        self.show_splash = false;
         Some(text)
     }
 
@@ -730,6 +734,7 @@ impl App {
                 ss.nick = our_nick.clone();
                 ss.connection_state = ConnectionState::Connected;
                 ss.has_echo_message = capabilities.contains("echo-message");
+                self.show_splash = false;
                 let msg = DisplayMessage {
                     timestamp: chrono::Utc::now(),
                     source: MessageSource::System,

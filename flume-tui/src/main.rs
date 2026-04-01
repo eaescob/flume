@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flume_config.ui.show_hostmask_on_join,
     );
     app.irc_config = irc_config;
-    app.active_theme = theme.name.clone();
+    app.active_theme = flume_config.ui.theme.clone();
 
     // Set up scripting engine
     let mut script_manager = match ScriptManager::new() {
@@ -140,9 +140,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if need_passphrase_prompt {
         app.input_mode = InputMode::Passphrase("Vault passphrase (Enter to skip)".to_string());
+        app.show_splash = false;
         app.system_message("Vault found. Enter passphrase to unlock (or press Enter to skip):");
     } else {
         app.vault_unlocked = true;
+    }
+
+    // Show splash only on truly fresh installs (no config, no vault, no servers)
+    if has_servers || need_passphrase_prompt || flume_core::config::config_dir().join("config.toml").exists() {
+        app.show_splash = false;
     }
 
     if !has_servers && !need_passphrase_prompt {
@@ -423,8 +429,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let path = flume_core::config::themes_dir().join(format!("{}.toml", name));
                         if path.exists() {
                             theme.switch_to(&name);
-                            app.active_theme = theme.name.clone();
-                            app.system_message(&format!("Theme switched to '{}'", theme.name));
+                            app.active_theme = name.clone();
+                            app.system_message(&format!("Theme switched to '{}'", name));
                         } else {
                             app.system_message(&format!(
                                 "Theme '{}' not found at {}", name, path.display()

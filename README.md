@@ -214,6 +214,7 @@ Use `/help` for the full list, or `/help <command>` for details on any command.
 
 | Command | Description |
 |---------|-------------|
+| `/set <key> <value>` | View or change settings |
 | `/go <name or #>` | Jump to buffer by name or number |
 | `/split v\|h <buf>` | Split view |
 | `/script load <name>` | Load a script |

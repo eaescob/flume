@@ -624,21 +624,23 @@ async fn process_input(
                         target: target.clone(),
                         text: msg_text.clone(),
                     }).await;
-                    // Show our own message in the appropriate buffer
-                    let nick = app.active_nick().to_string();
-                    let scrollback = app.scrollback_limit;
-                    if let Some(ss) = app.active_server_state_mut() {
-                        ss.ensure_buffer(&target);
-                        ss.add_message(
-                            &target,
-                            DisplayMessage {
-                                timestamp: chrono::Utc::now(),
-                                source: MessageSource::Own(nick),
-                                text: msg_text,
-                                highlight: false,
-                            },
-                            scrollback,
-                        );
+                    let has_echo = app.active_server_state().map(|ss| ss.has_echo_message).unwrap_or(false);
+                    if !has_echo {
+                        let nick = app.active_nick().to_string();
+                        let scrollback = app.scrollback_limit;
+                        if let Some(ss) = app.active_server_state_mut() {
+                            ss.ensure_buffer(&target);
+                            ss.add_message(
+                                &target,
+                                DisplayMessage {
+                                    timestamp: chrono::Utc::now(),
+                                    source: MessageSource::Own(nick),
+                                    text: msg_text,
+                                    highlight: false,
+                                },
+                                scrollback,
+                            );
+                        }
                     }
                 }
             }
@@ -1227,19 +1229,23 @@ async fn process_input(
                 target: target.clone(),
                 text: text.to_string(),
             }).await;
-            let nick = app.active_nick().to_string();
-            let scrollback = app.scrollback_limit;
-            if let Some(ss) = app.active_server_state_mut() {
-                ss.add_message(
-                    target,
-                    DisplayMessage {
-                        timestamp: chrono::Utc::now(),
-                        source: MessageSource::Own(nick),
-                        text: text.to_string(),
-                        highlight: false,
-                    },
-                    scrollback,
-                );
+            // Only add locally if server doesn't echo our messages back
+            let has_echo = app.active_server_state().map(|ss| ss.has_echo_message).unwrap_or(false);
+            if !has_echo {
+                let nick = app.active_nick().to_string();
+                let scrollback = app.scrollback_limit;
+                if let Some(ss) = app.active_server_state_mut() {
+                    ss.add_message(
+                        target,
+                        DisplayMessage {
+                            timestamp: chrono::Utc::now(),
+                            source: MessageSource::Own(nick),
+                            text: text.to_string(),
+                            highlight: false,
+                        },
+                        scrollback,
+                    );
+                }
             }
         } else {
             app.system_message("No target set. Use /join <channel> or /buffer <name>");

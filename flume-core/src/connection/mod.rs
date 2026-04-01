@@ -212,6 +212,7 @@ impl ServerConnection {
         let _ = self.event_tx.send(IrcEvent::Connected {
             server_name: server_name.clone(),
             our_nick: result.nick.clone(),
+            capabilities: result.capabilities.clone(),
         });
 
         let _ = self.event_tx.send(IrcEvent::StateChanged {

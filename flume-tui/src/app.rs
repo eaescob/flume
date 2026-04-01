@@ -184,6 +184,8 @@ pub struct ServerState {
     pub user_modes: String, // e.g., "+iwx"
     pub connection_state: ConnectionState,
     pub command_tx: Option<mpsc::Sender<UserCommand>>,
+    /// Server supports echo-message (our messages are echoed back).
+    pub has_echo_message: bool,
 }
 
 impl ServerState {
@@ -199,6 +201,7 @@ impl ServerState {
             user_modes: String::new(),
             connection_state: ConnectionState::Disconnected,
             command_tx: None,
+            has_echo_message: false,
         }
     }
 
@@ -715,10 +718,11 @@ impl App {
         let highlight_words = self.notification_config.highlight_words.clone();
 
         match event {
-            IrcEvent::Connected { our_nick, .. } => {
+            IrcEvent::Connected { our_nick, capabilities, .. } => {
                 let ss = self.servers.get_mut(&server_name).unwrap();
                 ss.nick = our_nick.clone();
                 ss.connection_state = ConnectionState::Connected;
+                ss.has_echo_message = capabilities.contains("echo-message");
                 let msg = DisplayMessage {
                     timestamp: chrono::Utc::now(),
                     source: MessageSource::System,

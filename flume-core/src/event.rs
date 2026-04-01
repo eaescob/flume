@@ -7,6 +7,7 @@ pub enum IrcEvent {
     Connected {
         server_name: String,
         our_nick: String,
+        capabilities: std::collections::HashSet<String>,
     },
     /// Disconnected from the server.
     Disconnected {

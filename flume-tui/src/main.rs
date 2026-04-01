@@ -995,7 +995,7 @@ fn slugify_name(description: &str, ext: &str) -> String {
 /// Convert an IrcEvent to a ScriptEvent for the scripting engine.
 fn irc_event_to_script_event(event: &IrcEvent) -> Option<ScriptEvent> {
     match event {
-        IrcEvent::Connected { server_name, our_nick } => {
+        IrcEvent::Connected { server_name, our_nick, .. } => {
             Some(ScriptEvent::new("connect", server_name).field("nick", our_nick))
         }
         IrcEvent::Disconnected { server_name, reason } => {

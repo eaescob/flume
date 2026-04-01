@@ -43,6 +43,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         } else {
             buf_name.as_str()
         };
+        // Find the 1-based index in buffer_order (for /go <num>)
+        let idx = ss.buffer_order.iter().position(|b| b == *buf_name)
+            .map(|i| i + 1)
+            .unwrap_or(0);
         let is_active = **buf_name == ss.active_buffer;
         let buf = ss.buffers.get(buf_name.as_str());
         let unread = buf.map(|b| b.unread_count).unwrap_or(0);
@@ -50,24 +54,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
         let (label, style) = if is_active {
             (
-                format!(" {}", display),
+                format!(" {}.{}", idx, display),
                 Style::default()
                     .fg(theme.active)
                     .add_modifier(Modifier::BOLD),
             )
         } else if highlights > 0 {
             (
-                format!(" {}({}!)", display, unread),
+                format!(" {}.{}({}!)", idx, display, unread),
                 Style::default().fg(theme.chat_highlight),
             )
         } else if unread > 0 {
             (
-                format!(" {}({})", display, unread),
+                format!(" {}.{}({})", idx, display, unread),
                 Style::default().fg(theme.unread),
             )
         } else {
             (
-                format!(" {}", display),
+                format!(" {}.{}", idx, display),
                 Style::default().fg(theme.buffer_list_fg),
             )
         };

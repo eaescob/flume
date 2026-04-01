@@ -1,0 +1,58 @@
+[meta]
+name = "catppuccin-glass"
+description = "Catppuccin Mocha inspired glass theme"
+author = "FlumeIRC"
+version = "1.0"
+
+[colors]
+# Base colors (Catppuccin Mocha)
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+
+# Bars
+title_bar_bg = "#181825"
+title_bar_fg = "#89b4fa"
+status_bar_bg = "#181825"
+status_bar_fg = "#bac2de"
+input_bg = "#1e1e2e"
+input_fg = "#cdd6f4"
+
+# Buffer indicators
+active = "#89b4fa"
+inactive = "#6c7086"
+unread = "#fab387"
+
+# Chat
+chat_timestamp = "#6c7086"
+chat_message = "#cdd6f4"
+chat_own_nick = "#89b4fa"
+chat_action = "#cba6f7"
+chat_server = "#585b70"
+chat_system = "#f9e2af"
+chat_highlight = "#f38ba8"
+chat_url = "#94e2d5"
+
+# Search
+scroll_indicator = "#6c7086"
+search_match_fg = "#1e1e2e"
+search_match_bg = "#f9e2af"
+
+# Nick list
+nick_list_fg = "#bac2de"
+nick_list_op = "#f38ba8"
+nick_list_voice = "#a6e3a1"
+
+[nick_colors]
+mode = "hash"
+palette = [
+    "#f38ba8",
+    "#fab387",
+    "#f9e2af",
+    "#a6e3a1",
+    "#94e2d5",
+    "#89b4fa",
+    "#cba6f7",
+    "#f5c2e7",
+    "#74c7ec",
+    "#eba0ac"
+]

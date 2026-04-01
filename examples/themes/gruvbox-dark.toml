@@ -1,0 +1,54 @@
+[meta]
+name = "Gruvbox Dark"
+author = "morhetz (adapted for Flume)"
+
+[colors]
+background = "#282828"
+foreground = "#ebdbb2"
+highlight = "#fabd2f"
+error = "#fb4934"
+warning = "#fe8019"
+success = "#b8bb26"
+
+[nick_colors]
+palette = [
+    "#fb4934",
+    "#fe8019",
+    "#fabd2f",
+    "#b8bb26",
+    "#8ec07c",
+    "#83a598",
+    "#d3869b",
+    "#d65d0e",
+]
+
+[elements]
+title_bar_bg = "#3c3836"
+title_bar_fg = "#ebdbb2"
+status_bar_bg = "#3c3836"
+status_bar_fg = "#ebdbb2"
+input_bg = "#282828"
+input_fg = "#ebdbb2"
+nick_list_bg = "#282828"
+nick_list_fg = "#928374"
+nick_list_op = "#b8bb26"
+nick_list_voice = "#8ec07c"
+chat_timestamp = "#928374"
+chat_nick = "#ebdbb2"
+chat_message = "#ebdbb2"
+chat_own_nick = "#b8bb26"
+chat_action = "#d3869b"
+chat_notice = "#83a598"
+chat_server = "#83a598"
+chat_system = "#fabd2f"
+chat_highlight = "#fabd2f"
+chat_url = "#83a598"
+unread = "#fe8019"
+inactive = "#928374"
+active = "#fbf1c7"
+scroll_indicator = "#fabd2f"
+search_match_bg = "#3c3836"
+search_match_fg = "#fbf1c7"
+state_connected = "#b8bb26"
+state_connecting = "#fabd2f"
+state_disconnected = "#fb4934"

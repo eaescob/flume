@@ -1,0 +1,1958 @@
+use crossterm::event::{Event, KeyCode, KeyModifiers};
+
+use flume_core::config::keybindings::KeybindingMode;
+use flume_core::config::vault::Vault;
+use flume_core::event::UserCommand;
+
+use crate::app::{App, DisplayMessage, GenerateRequest, GenerationKind, InputMode, MessageSource, TabCompletionState, ViMode};
+use crate::keybindings::{self, InputAction, KeyCombo, Keymap};
+use crate::split::{self, LayoutProfile, SplitDirection, SplitState};
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+/// Lazily-initialized keymaps. Built once per mode on first use.
+struct KeymapSet {
+    emacs: Keymap,
+    vi: Keymap,
+    vi_normal: HashMap<KeyCombo, InputAction>,
+}
+
+fn keymap_set() -> &'static KeymapSet {
+    static SET: OnceLock<KeymapSet> = OnceLock::new();
+    SET.get_or_init(|| KeymapSet {
+        emacs: keybindings::build_keymap(KeybindingMode::Emacs),
+        vi: keybindings::build_keymap(KeybindingMode::Vi),
+        vi_normal: keybindings::build_vi_normal_keymap(),
+    })
+}
+
+/// Handle a crossterm input event.
+pub async fn handle_input(
+    app: &mut App,
+    event: Event,
+    vault: &mut Option<Vault>,
+) {
+    let Event::Key(key_event) = event else {
+        return;
+    };
+
+    // In passphrase mode, handle input specially
+    if matches!(app.input_mode, InputMode::Passphrase(_)) {
+        handle_passphrase_input(app, key_event.code, key_event.modifiers, vault);
+        return;
+    }
+
+    let maps = keymap_set();
+    let is_vi = app.keybinding_mode == KeybindingMode::Vi;
+    let is_vi_normal = is_vi && app.vi_mode == ViMode::Normal;
+
+    let keymap = if is_vi { &maps.vi } else { &maps.emacs };
+    let vi_normal_map = if is_vi { Some(&maps.vi_normal) } else { None };
+
+    // Try to resolve the key to an action
+    if let Some(action) = keybindings::resolve(&key_event, keymap, vi_normal_map, is_vi_normal) {
+        execute_action(app, action, vault).await;
+        return;
+    }
+
+    // Handle vi operator-pending (dd, cc)
+    if is_vi_normal {
+        if let KeyCode::Char(c) = key_event.code {
+            if let Some(pending) = app.vi_pending_op.take() {
+                match (pending, c) {
+                    ('d', 'd') => {
+                        app.input.clear();
+                        app.cursor_pos = 0;
+                    }
+                    ('c', 'c') => {
+                        app.input.clear();
+                        app.cursor_pos = 0;
+                        app.vi_mode = ViMode::Insert;
+                    }
+                    _ => {} // Invalid combo, just drop it
+                }
+                app.tab_state = None;
+                return;
+            }
+
+            // Start operator-pending for 'd' and 'c'
+            if c == 'd' || c == 'c' {
+                app.vi_pending_op = Some(c);
+                return;
+            }
+        }
+        // In vi normal mode, don't insert characters
+        app.vi_pending_op = None;
+        app.tab_state = None;
+        return;
+    }
+
+    // Unbound key — if printable char, insert it (emacs or vi-insert mode)
+    if let KeyCode::Char(c) = key_event.code {
+        let mods = key_event.modifiers & !KeyModifiers::SHIFT;
+        if mods.is_empty() || mods == KeyModifiers::NONE {
+            app.input.insert(app.cursor_pos, c);
+            app.cursor_pos += 1;
+            app.tab_state = None;
+        }
+    }
+}
+
+/// Execute a resolved input action.
+async fn execute_action(
+    app: &mut App,
+    action: InputAction,
+    vault: &mut Option<Vault>,
+) {
+    // Tab completion: only TabComplete preserves tab_state
+    let is_tab = matches!(action, InputAction::TabComplete);
+
+    match action {
+        // Submission
+        InputAction::Submit => {
+            if let Some(text) = app.submit_input() {
+                process_input(&text, app, vault).await;
+            }
+        }
+        InputAction::TabComplete => {
+            handle_tab_completion(app);
+        }
+
+        // Cursor movement
+        InputAction::CursorLeft => {
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+            }
+        }
+        InputAction::CursorRight => {
+            if app.cursor_pos < app.input.len() {
+                app.cursor_pos += 1;
+            }
+        }
+        InputAction::CursorHome => {
+            app.cursor_pos = 0;
+        }
+        InputAction::CursorEnd => {
+            app.cursor_pos = app.input.len();
+        }
+        InputAction::CursorWordLeft => {
+            app.cursor_pos = word_boundary_left(&app.input, app.cursor_pos);
+        }
+        InputAction::CursorWordRight => {
+            app.cursor_pos = word_boundary_right(&app.input, app.cursor_pos);
+        }
+
+        // Deletion
+        InputAction::DeleteCharBack => {
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+                app.input.remove(app.cursor_pos);
+            }
+        }
+        InputAction::DeleteCharForward => {
+            if app.cursor_pos < app.input.len() {
+                app.input.remove(app.cursor_pos);
+            }
+        }
+        InputAction::DeleteWordBack => {
+            let target = word_boundary_left(&app.input, app.cursor_pos);
+            app.input.drain(target..app.cursor_pos);
+            app.cursor_pos = target;
+        }
+        InputAction::DeleteToLineStart => {
+            app.input.drain(..app.cursor_pos);
+            app.cursor_pos = 0;
+        }
+        InputAction::DeleteToLineEnd => {
+            app.input.truncate(app.cursor_pos);
+        }
+        InputAction::TransposeChars => {
+            if app.cursor_pos > 0 && app.input.len() >= 2 {
+                // If at end, transpose last two; otherwise transpose around cursor
+                let pos = if app.cursor_pos >= app.input.len() {
+                    app.cursor_pos - 1
+                } else {
+                    app.cursor_pos
+                };
+                if pos > 0 {
+                    let bytes = unsafe { app.input.as_bytes_mut() };
+                    bytes.swap(pos - 1, pos);
+                    app.cursor_pos = pos + 1;
+                }
+            }
+        }
+
+        // History
+        InputAction::HistoryPrev => {
+            app.history_up();
+        }
+        InputAction::HistoryNext => {
+            app.history_down();
+        }
+
+        // Buffer navigation
+        InputAction::ScrollUp => {
+            app.scroll_up(10);
+        }
+        InputAction::ScrollDown => {
+            app.scroll_down(10);
+        }
+        InputAction::BufferNext => {
+            if let Some(ss) = app.active_server_state_mut() {
+                ss.cycle_buffer(true);
+            }
+        }
+        InputAction::BufferPrev => {
+            if let Some(ss) = app.active_server_state_mut() {
+                ss.cycle_buffer(false);
+            }
+        }
+        InputAction::BufferJump(n) => {
+            let idx = (n as usize) - 1;
+            if let Some(ss) = app.active_server_state_mut() {
+                if let Some(name) = ss.buffer_order.get(idx).cloned() {
+                    ss.switch_buffer(&name);
+                }
+            }
+        }
+        InputAction::ServerCycle => {
+            app.cycle_server();
+        }
+
+        // App control
+        InputAction::Quit => {
+            app.should_quit = true;
+        }
+        InputAction::SwapSplitFocus => {
+            app.swap_split_focus();
+        }
+
+        // Vi mode switching
+        InputAction::ViEnterNormal => {
+            app.vi_mode = ViMode::Normal;
+            app.vi_pending_op = None;
+            // Move cursor back one (vi convention)
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+            }
+        }
+        InputAction::ViEnterInsert => {
+            app.vi_mode = ViMode::Insert;
+            app.vi_pending_op = None;
+        }
+        InputAction::ViEnterInsertAfter => {
+            app.vi_mode = ViMode::Insert;
+            app.vi_pending_op = None;
+            if app.cursor_pos < app.input.len() {
+                app.cursor_pos += 1;
+            }
+        }
+        InputAction::ViEnterInsertEnd => {
+            app.vi_mode = ViMode::Insert;
+            app.vi_pending_op = None;
+            app.cursor_pos = app.input.len();
+        }
+        InputAction::ViEnterInsertStart => {
+            app.vi_mode = ViMode::Insert;
+            app.vi_pending_op = None;
+            app.cursor_pos = 0;
+        }
+        InputAction::ViDeleteChar => {
+            if app.cursor_pos < app.input.len() {
+                app.input.remove(app.cursor_pos);
+                // Keep cursor in bounds
+                if app.cursor_pos >= app.input.len() && app.cursor_pos > 0 {
+                    app.cursor_pos -= 1;
+                }
+            }
+        }
+        InputAction::ViDeleteCharBack => {
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+                app.input.remove(app.cursor_pos);
+            }
+        }
+        InputAction::ViDeleteLine => {
+            app.input.clear();
+            app.cursor_pos = 0;
+        }
+        InputAction::ViChangeLine => {
+            app.input.clear();
+            app.cursor_pos = 0;
+            app.vi_mode = ViMode::Insert;
+            app.vi_pending_op = None;
+        }
+        InputAction::ViChangeToEnd => {
+            app.input.truncate(app.cursor_pos);
+            app.vi_mode = ViMode::Insert;
+            app.vi_pending_op = None;
+        }
+    }
+
+    if !is_tab {
+        app.tab_state = None;
+    }
+}
+
+/// Find the start of the previous word (for Ctrl+W, Alt+B).
+fn word_boundary_left(input: &str, pos: usize) -> usize {
+    if pos == 0 {
+        return 0;
+    }
+    let bytes = input.as_bytes();
+    let mut i = pos;
+    // Skip whitespace backwards
+    while i > 0 && bytes[i - 1] == b' ' {
+        i -= 1;
+    }
+    // Skip word characters backwards
+    while i > 0 && bytes[i - 1] != b' ' {
+        i -= 1;
+    }
+    i
+}
+
+/// Find the start of the next word (for Alt+F, w).
+fn word_boundary_right(input: &str, pos: usize) -> usize {
+    let len = input.len();
+    if pos >= len {
+        return len;
+    }
+    let bytes = input.as_bytes();
+    let mut i = pos;
+    // Skip current word characters
+    while i < len && bytes[i] != b' ' {
+        i += 1;
+    }
+    // Skip whitespace
+    while i < len && bytes[i] == b' ' {
+        i += 1;
+    }
+    i
+}
+
+fn handle_passphrase_input(
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    vault: &mut Option<Vault>,
+) {
+    match code {
+        KeyCode::Enter => {
+            let passphrase = std::mem::take(&mut app.input);
+            app.cursor_pos = 0;
+            let label = match &app.input_mode {
+                InputMode::Passphrase(l) => l.clone(),
+                _ => String::new(),
+            };
+
+            if passphrase.is_empty() {
+                app.system_message("Vault skipped (empty passphrase)");
+                app.input_mode = InputMode::Normal;
+                app.vault_unlocked = true;
+                return;
+            }
+
+            if label.starts_with("New vault") {
+                if let Some(ref mut v) = vault {
+                    v.change_passphrase(passphrase);
+                    if let Err(e) = v.save() {
+                        app.system_message(&format!("Failed to save vault: {}", e));
+                    } else {
+                        app.system_message("Vault passphrase changed");
+                    }
+                } else {
+                    let path = flume_core::config::vault_path();
+                    let v = Vault::new(path, passphrase);
+                    if let Err(e) = v.save() {
+                        app.system_message(&format!("Failed to create vault: {}", e));
+                    } else {
+                        app.system_message("New vault created");
+                    }
+                    *vault = Some(v);
+                }
+                app.input_mode = InputMode::Normal;
+                app.vault_unlocked = true;
+            } else {
+                let path = flume_core::config::vault_path();
+                match Vault::load(path, passphrase) {
+                    Ok(v) => {
+                        app.system_message("Vault unlocked");
+                        *vault = Some(v);
+                        app.input_mode = InputMode::Normal;
+                        app.vault_unlocked = true;
+                    }
+                    Err(flume_core::config::vault::VaultError::Decryption) => {
+                        app.system_message("Wrong passphrase. Try again (or press Enter to skip)");
+                    }
+                    Err(e) => {
+                        app.system_message(&format!("Vault error: {}. Skipping vault.", e));
+                        app.input_mode = InputMode::Normal;
+                        app.vault_unlocked = true;
+                    }
+                }
+            }
+        }
+        KeyCode::Char(c) => {
+            if modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                app.should_quit = true;
+                return;
+            }
+            app.input.insert(app.cursor_pos, c);
+            app.cursor_pos += 1;
+        }
+        KeyCode::Backspace => {
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+                app.input.remove(app.cursor_pos);
+            }
+        }
+        KeyCode::Left => {
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.cursor_pos < app.input.len() {
+                app.cursor_pos += 1;
+            }
+        }
+        KeyCode::Esc => {
+            app.input.clear();
+            app.cursor_pos = 0;
+            app.system_message("Vault skipped");
+            app.input_mode = InputMode::Normal;
+            app.vault_unlocked = true;
+        }
+        _ => {}
+    }
+}
+
+fn handle_tab_completion(app: &mut App) {
+    if let Some(ref mut state) = app.tab_state {
+        // Cycling through existing matches
+        if state.matches.is_empty() {
+            return;
+        }
+        state.index = (state.index + 1) % state.matches.len();
+        let completed = &state.matches[state.index];
+        let suffix = if state.word_start == 0 { ": " } else { " " };
+        app.input.truncate(state.word_start);
+        app.input.push_str(completed);
+        app.input.push_str(suffix);
+        app.cursor_pos = app.input.len();
+    } else {
+        // Start new tab completion
+        if app.input.is_empty() {
+            return;
+        }
+
+        // Find the word being typed (from last space or start)
+        let word_start = app.input[..app.cursor_pos]
+            .rfind(' ')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = app.input[word_start..app.cursor_pos].to_string();
+        if prefix.is_empty() {
+            return;
+        }
+
+        // Get nicks from active channel buffer
+        let prefix_lower = prefix.to_lowercase();
+        let nicks: Vec<String> = app
+            .active_server_state()
+            .and_then(|ss| ss.buffers.get(&ss.active_buffer))
+            .map(|buf| {
+                buf.nicks
+                    .iter()
+                    .filter(|cn| cn.nick.to_lowercase().starts_with(&prefix_lower))
+                    .map(|cn| cn.nick.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if nicks.is_empty() {
+            return;
+        }
+
+        let completed = &nicks[0];
+        let suffix = if word_start == 0 { ": " } else { " " };
+        app.input.truncate(word_start);
+        app.input.push_str(completed);
+        app.input.push_str(suffix);
+        app.cursor_pos = app.input.len();
+
+        app.tab_state = Some(TabCompletionState {
+            prefix,
+            word_start,
+            matches: nicks,
+            index: 0,
+        });
+    }
+}
+
+/// Send a command to the active server. Returns false if no connection.
+async fn send_cmd(app: &App, cmd: UserCommand) -> bool {
+    if let Some(tx) = app.active_command_tx() {
+        let _ = tx.send(cmd).await;
+        true
+    } else {
+        false
+    }
+}
+
+async fn process_input(
+    text: &str,
+    app: &mut App,
+    vault: &mut Option<Vault>,
+) {
+    if text.starts_with('/') {
+        let rest = &text[1..];
+        let (cmd, args) = match rest.find(' ') {
+            Some(pos) => (&rest[..pos], rest[pos + 1..].trim()),
+            None => (rest, ""),
+        };
+
+        match cmd.to_lowercase().as_str() {
+            "join" | "j" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /join <channel> [key]");
+                } else {
+                    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                    let channel = parts[0].to_string();
+                    let key = parts.get(1).map(|s| s.to_string());
+                    send_cmd(app, UserCommand::Join { channel, key }).await;
+                }
+            }
+            "part" | "leave" => {
+                let target = app.active_target().map(|s| s.to_string());
+                let (channel, message) = if args.is_empty() {
+                    (target, None)
+                } else {
+                    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                    if parts[0].starts_with('#') {
+                        (Some(parts[0].to_string()), parts.get(1).map(|s| s.to_string()))
+                    } else {
+                        (target, Some(args.to_string()))
+                    }
+                };
+                if let Some(ch) = channel {
+                    send_cmd(app, UserCommand::Part { channel: ch, message }).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "nick" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /nick <nickname>");
+                } else {
+                    send_cmd(app, UserCommand::ChangeNick(args.to_string())).await;
+                }
+            }
+            "quit" | "q" => {
+                let msg = if args.is_empty() { None } else { Some(args.to_string()) };
+                send_cmd(app, UserCommand::Quit(msg)).await;
+                app.should_quit = true;
+            }
+            "disconnect" => {
+                // Disconnect the active server (or named server)
+                let server_name = if args.is_empty() {
+                    app.active_server.clone()
+                } else {
+                    Some(args.to_string())
+                };
+                if let Some(ref name) = server_name {
+                    if let Some(ss) = app.servers.get(name) {
+                        if let Some(tx) = &ss.command_tx {
+                            let _ = tx.send(UserCommand::Quit(None)).await;
+                        }
+                    }
+                    app.system_message_to(name, "Disconnecting...");
+                } else {
+                    app.system_message("No active server");
+                }
+            }
+            "msg" | "query" => {
+                let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                if parts.len() < 2 {
+                    app.system_message("Usage: /msg <target> <message>");
+                } else {
+                    let target = parts[0].to_string();
+                    let msg_text = parts[1].to_string();
+                    send_cmd(app, UserCommand::SendMessage {
+                        target: target.clone(),
+                        text: msg_text.clone(),
+                    }).await;
+                    // Show our own message in the appropriate buffer
+                    let nick = app.active_nick().to_string();
+                    let scrollback = app.scrollback_limit;
+                    if let Some(ss) = app.active_server_state_mut() {
+                        ss.ensure_buffer(&target);
+                        ss.add_message(
+                            &target,
+                            DisplayMessage {
+                                timestamp: chrono::Utc::now(),
+                                source: MessageSource::Own(nick),
+                                text: msg_text,
+                                highlight: false,
+                            },
+                            scrollback,
+                        );
+                    }
+                }
+            }
+            "me" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if let Some(ref target) = target {
+                    let action = format!("\x01ACTION {}\x01", args);
+                    send_cmd(app, UserCommand::SendMessage {
+                        target: target.clone(),
+                        text: action,
+                    }).await;
+                    let nick = app.active_nick().to_string();
+                    let scrollback = app.scrollback_limit;
+                    if let Some(ss) = app.active_server_state_mut() {
+                        ss.add_message(
+                            target,
+                            DisplayMessage {
+                                timestamp: chrono::Utc::now(),
+                                source: MessageSource::Action(nick),
+                                text: args.to_string(),
+                                highlight: false,
+                            },
+                            scrollback,
+                        );
+                    }
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "quote" | "raw" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /quote <raw IRC line>");
+                } else {
+                    send_cmd(app, UserCommand::RawLine(args.to_string())).await;
+                }
+            }
+            // --- Core IRC commands ---
+            "whois" | "wi" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /whois <nick>");
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("WHOIS {}", args))).await;
+                }
+            }
+            "who" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /who <mask>");
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("WHO {}", args))).await;
+                }
+            }
+            "mode" | "m" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /mode <target> [modes] [params]");
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {}", args))).await;
+                }
+            }
+            "topic" | "t" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    // Show topic for current channel
+                    if let Some(ch) = target {
+                        send_cmd(app, UserCommand::RawLine(format!("TOPIC {}", ch))).await;
+                    } else {
+                        app.system_message("Usage: /topic [channel] [text]");
+                    }
+                } else if args.starts_with('#') {
+                    // /topic #channel [text]
+                    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                    if parts.len() == 1 {
+                        send_cmd(app, UserCommand::RawLine(format!("TOPIC {}", parts[0]))).await;
+                    } else {
+                        send_cmd(app, UserCommand::RawLine(format!("TOPIC {} :{}", parts[0], parts[1]))).await;
+                    }
+                } else if let Some(ch) = target {
+                    // /topic some text (set topic on current channel)
+                    send_cmd(app, UserCommand::RawLine(format!("TOPIC {} :{}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "kick" | "k" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    app.system_message("Usage: /kick <nick> [reason]");
+                } else if let Some(ch) = target {
+                    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                    let nick = parts[0];
+                    let reason = parts.get(1).unwrap_or(&nick);
+                    send_cmd(app, UserCommand::RawLine(format!("KICK {} {} :{}", ch, nick, reason))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "ban" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    // Show ban list
+                    if let Some(ch) = target {
+                        send_cmd(app, UserCommand::RawLine(format!("MODE {} +b", ch))).await;
+                    } else {
+                        app.system_message("Usage: /ban [mask]");
+                    }
+                } else if let Some(ch) = target {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {} +b {}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "unban" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    app.system_message("Usage: /unban <mask>");
+                } else if let Some(ch) = target {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {} -b {}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "invite" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /invite <nick> [channel]");
+                } else {
+                    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                    let nick = parts[0];
+                    let channel = parts
+                        .get(1)
+                        .map(|s| s.to_string())
+                        .or_else(|| app.active_target().map(|s| s.to_string()));
+                    if let Some(ch) = channel {
+                        send_cmd(app, UserCommand::RawLine(format!("INVITE {} {}", nick, ch))).await;
+                    } else {
+                        app.system_message("Not in a channel");
+                    }
+                }
+            }
+            "names" => {
+                let channel = if args.is_empty() {
+                    app.active_target().map(|s| s.to_string())
+                } else {
+                    Some(args.to_string())
+                };
+                if let Some(ch) = channel {
+                    send_cmd(app, UserCommand::RawLine(format!("NAMES {}", ch))).await;
+                } else {
+                    app.system_message("Usage: /names [channel]");
+                }
+            }
+            "list" => {
+                if args.is_empty() {
+                    send_cmd(app, UserCommand::RawLine("LIST".to_string())).await;
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("LIST {}", args))).await;
+                }
+            }
+            "away" => {
+                if args.is_empty() {
+                    // Unset away
+                    send_cmd(app, UserCommand::RawLine("AWAY".to_string())).await;
+                    app.system_message("Away status cleared");
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("AWAY :{}", args))).await;
+                    app.system_message(&format!("Set away: {}", args));
+                }
+            }
+            "back" => {
+                send_cmd(app, UserCommand::RawLine("AWAY".to_string())).await;
+                app.system_message("Away status cleared");
+            }
+            "notice" | "n" => {
+                let parts: Vec<&str> = args.splitn(2, ' ').collect();
+                if parts.len() < 2 {
+                    app.system_message("Usage: /notice <target> <text>");
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("NOTICE {} :{}", parts[0], parts[1]))).await;
+                }
+            }
+            "ctcp" => {
+                let parts: Vec<&str> = args.splitn(3, ' ').collect();
+                if parts.len() < 2 {
+                    app.system_message("Usage: /ctcp <nick> <command> [args]");
+                } else {
+                    let target = parts[0];
+                    let command = parts[1].to_uppercase();
+                    let ctcp_args = parts.get(2).unwrap_or(&"");
+                    let ctcp_msg = if ctcp_args.is_empty() {
+                        format!("\x01{}\x01", command)
+                    } else {
+                        format!("\x01{} {}\x01", command, ctcp_args)
+                    };
+                    send_cmd(app, UserCommand::SendMessage {
+                        target: target.to_string(),
+                        text: ctcp_msg,
+                    }).await;
+                    app.system_message(&format!("CTCP {} sent to {}", command, target));
+                }
+            }
+            "ping" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /ping <nick>");
+                } else {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    send_cmd(app, UserCommand::SendMessage {
+                        target: args.to_string(),
+                        text: format!("\x01PING {}\x01", ts),
+                    }).await;
+                    app.system_message(&format!("CTCP PING sent to {}", args));
+                }
+            }
+            "motd" => {
+                send_cmd(app, UserCommand::RawLine("MOTD".to_string())).await;
+            }
+            "lusers" => {
+                send_cmd(app, UserCommand::RawLine("LUSERS".to_string())).await;
+            }
+            "version" => {
+                if args.is_empty() {
+                    send_cmd(app, UserCommand::RawLine("VERSION".to_string())).await;
+                } else {
+                    send_cmd(app, UserCommand::RawLine(format!("VERSION {}", args))).await;
+                }
+            }
+            "info" => {
+                send_cmd(app, UserCommand::RawLine("INFO".to_string())).await;
+            }
+            "op" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    app.system_message("Usage: /op <nick>");
+                } else if let Some(ch) = target {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {} +o {}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "deop" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    app.system_message("Usage: /deop <nick>");
+                } else if let Some(ch) = target {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {} -o {}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "voice" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    app.system_message("Usage: /voice <nick>");
+                } else if let Some(ch) = target {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {} +v {}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "devoice" => {
+                let target = app.active_target().map(|s| s.to_string());
+                if args.is_empty() {
+                    app.system_message("Usage: /devoice <nick>");
+                } else if let Some(ch) = target {
+                    send_cmd(app, UserCommand::RawLine(format!("MODE {} -v {}", ch, args))).await;
+                } else {
+                    app.system_message("Not in a channel");
+                }
+            }
+            "close" => {
+                // Close active buffer (remove from buffer list)
+                if let Some(ss) = app.active_server_state_mut() {
+                    let buf = ss.active_buffer.clone();
+                    if buf.is_empty() {
+                        app.system_message("Cannot close server buffer");
+                    } else {
+                        ss.buffers.remove(&buf);
+                        ss.buffer_order.retain(|b| *b != buf);
+                        // Switch to server buffer
+                        ss.active_buffer = String::new();
+                    }
+                }
+            }
+            "clear" => {
+                if let Some(ss) = app.active_server_state_mut() {
+                    ss.active_buf_mut().messages.clear();
+                    ss.active_buf_mut().scroll_offset = 0;
+                }
+            }
+            "search" | "grep" | "find" => {
+                if args.is_empty() {
+                    // Clear search
+                    if let Some(ss) = app.active_server_state_mut() {
+                        ss.active_buf_mut().search = None;
+                    }
+                    app.system_message("Search cleared");
+                } else {
+                    let pattern = args.to_lowercase();
+                    // Find first matching line and scroll to it
+                    let scroll_to = app.active_messages().iter().enumerate().rev()
+                        .find(|(_, msg)| msg.text.to_lowercase().contains(&pattern))
+                        .map(|(i, _)| i);
+
+                    if let Some(idx) = scroll_to {
+                        let total = app.active_messages().len();
+                        let offset = total.saturating_sub(idx + 1);
+                        if let Some(ss) = app.active_server_state_mut() {
+                            ss.active_buf_mut().search = Some(pattern);
+                            ss.active_buf_mut().scroll_offset = offset;
+                        }
+                    } else {
+                        app.system_message(&format!("No matches for '{}'", args));
+                    }
+                }
+            }
+            "help" | "h" => {
+                show_help(app);
+            }
+            "keys" | "keybindings" => {
+                show_keybindings(app);
+            }
+            "buffer" | "buf" | "b" => {
+                if args.is_empty() {
+                    // List buffers for active server
+                    if let Some(ss) = app.active_server_state() {
+                        let lines: Vec<String> = ss.buffer_order.iter().enumerate().map(|(i, name)| {
+                            let display = if name.is_empty() { "server" } else { name.as_str() };
+                            let active = if *name == ss.active_buffer { " *" } else { "" };
+                            let unread = ss.buffers.get(name).map(|b| b.unread_count).unwrap_or(0);
+                            if unread > 0 {
+                                format!("  {}: {} ({} unread){}", i + 1, display, unread, active)
+                            } else {
+                                format!("  {}: {}{}", i + 1, display, active)
+                            }
+                        }).collect();
+                        app.system_message("Buffers:");
+                        for line in &lines {
+                            app.system_message(line);
+                        }
+                    }
+                } else {
+                    if let Some(ss) = app.active_server_state_mut() {
+                        if ss.buffers.contains_key(args) {
+                            ss.switch_buffer(args);
+                        } else {
+                            // Try as "server" alias for ""
+                            if args == "server" {
+                                ss.switch_buffer("");
+                            }
+                        }
+                    }
+                }
+            }
+            "switch" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /switch <server name>");
+                } else if app.servers.contains_key(args) {
+                    app.switch_server(args);
+                } else {
+                    app.system_message(&format!("Server '{}' not connected", args));
+                }
+            }
+            "connect" => {
+                if args.is_empty() {
+                    app.system_message("Usage: /connect <network name>");
+                    app.system_message("Use /server list to see available networks.");
+                } else {
+                    let name = args.split_whitespace().next().unwrap_or("");
+                    if app.irc_config.find(name).is_some()
+                        || flume_core::config::load_server_config(name).is_ok()
+                    {
+                        app.connect_to = Some(name.to_string());
+                    } else {
+                        app.system_message(&format!("Network '{}' not found. Use /server add to create it.", name));
+                    }
+                }
+            }
+            "secure" => {
+                handle_secure_command(args, app, vault);
+            }
+            "server" => {
+                handle_server_command(args, app);
+            }
+            "save" => {
+                match flume_core::config::save_irc_config(&app.irc_config) {
+                    Ok(()) => app.system_message(&format!(
+                        "Saved {} network(s) to {}",
+                        app.irc_config.networks.len(),
+                        flume_core::config::irc_config_path().display()
+                    )),
+                    Err(e) => app.system_message(&format!("Failed to save: {}", e)),
+                }
+            }
+            "url" | "urls" => {
+                let messages = app.active_messages();
+                let mut all_urls: Vec<(String, String)> = Vec::new();
+                for msg in messages.iter() {
+                    let nick = match &msg.source {
+                        MessageSource::User(n)
+                        | MessageSource::Own(n)
+                        | MessageSource::Action(n) => n.clone(),
+                        _ => String::new(),
+                    };
+                    for u in crate::url::extract_urls(&msg.text) {
+                        all_urls.push((u, nick.clone()));
+                    }
+                }
+
+                if all_urls.is_empty() {
+                    app.system_message("No URLs found in this buffer");
+                } else if args.is_empty() {
+                    // List recent URLs (last 10)
+                    app.system_message(&format!("URLs in buffer ({} total):", all_urls.len()));
+                    for (i, (u, nick)) in all_urls.iter().rev().take(10).enumerate() {
+                        let label = if nick.is_empty() {
+                            format!("  {}: {}", i + 1, u)
+                        } else {
+                            format!("  {}: {} ({})", i + 1, u, nick)
+                        };
+                        app.system_message(&label);
+                    }
+                    app.system_message("Use /url <number> to open");
+                } else {
+                    let num_str = args.trim_start_matches("open").trim();
+                    if let Ok(n) = num_str.parse::<usize>() {
+                        if n >= 1 && n <= all_urls.len() {
+                            let idx = all_urls.len() - n;
+                            let u = &all_urls[idx].0;
+                            app.system_message(&format!("Opening: {}", u));
+                            let _ = std::process::Command::new(&app.url_open_command)
+                                .arg(u)
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .spawn();
+                        } else {
+                            app.system_message(&format!("Invalid URL number (1-{})", all_urls.len()));
+                        }
+                    } else {
+                        app.system_message("Usage: /url [number]");
+                    }
+                }
+            }
+            "theme" => {
+                if args.is_empty() {
+                    let themes = crate::theme::Theme::list_available();
+                    app.system_message("Available themes:");
+                    for name in &themes {
+                        app.system_message(&format!("  {}", name));
+                    }
+                    app.system_message("Usage: /theme <name> | /theme reload");
+                } else if args == "reload" {
+                    // Signal main loop to reload current theme
+                    app.system_message("Theme reload requested");
+                    // The hot-reload check will pick up changes on next tick
+                } else {
+                    app.theme_switch = Some(args.to_string());
+                }
+            }
+            "split" => {
+                handle_split_command(args, app);
+            }
+            "unsplit" => {
+                if app.split.is_some() {
+                    app.unsplit();
+                    app.system_message("Split closed");
+                } else {
+                    app.system_message("No active split");
+                }
+            }
+            "focus" => {
+                if app.split.is_some() {
+                    app.swap_split_focus();
+                } else {
+                    app.system_message("No active split to swap focus");
+                }
+            }
+            "layout" => {
+                handle_layout_command(args, app);
+            }
+            "script" => {
+                // Delegate to main loop which owns the ScriptManager
+                app.script_command = Some(args.to_string());
+            }
+            "generate" | "gen" => {
+                handle_generate_command(args, app);
+            }
+            "dcc" => {
+                handle_dcc_command(args, app);
+            }
+            "xdcc" => {
+                handle_xdcc_command(args, app).await;
+            }
+            _ => {
+                // Try as script command (processed in main loop)
+                app.script_command = Some(format!("_exec {} {}", cmd, args));
+            }
+        }
+    } else {
+        // Send as PRIVMSG to current target
+        let target = app.active_target().map(|s| s.to_string());
+        if let Some(ref target) = target {
+            send_cmd(app, UserCommand::SendMessage {
+                target: target.clone(),
+                text: text.to_string(),
+            }).await;
+            let nick = app.active_nick().to_string();
+            let scrollback = app.scrollback_limit;
+            if let Some(ss) = app.active_server_state_mut() {
+                ss.add_message(
+                    target,
+                    DisplayMessage {
+                        timestamp: chrono::Utc::now(),
+                        source: MessageSource::Own(nick),
+                        text: text.to_string(),
+                        highlight: false,
+                    },
+                    scrollback,
+                );
+            }
+        } else {
+            app.system_message("No target set. Use /join <channel> or /buffer <name>");
+        }
+    }
+}
+
+fn handle_secure_command(args: &str, app: &mut App, vault: &mut Option<Vault>) {
+    let parts: Vec<&str> = args.splitn(3, ' ').collect();
+    let subcmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
+
+    match subcmd.as_str() {
+        "set" => {
+            if parts.len() < 3 {
+                app.system_message("Usage: /secure set <name> <value>");
+                return;
+            }
+            let name = parts[1];
+            let value = parts[2];
+            match vault {
+                Some(v) => {
+                    v.set(name.to_string(), value.to_string());
+                    if let Err(e) = v.save() {
+                        app.system_message(&format!("Failed to save vault: {}", e));
+                    } else {
+                        app.system_message(&format!("Secret '{}' saved", name));
+                    }
+                }
+                None => {
+                    app.system_message("Vault not initialized. Use /secure init");
+                }
+            }
+        }
+        "del" | "delete" => {
+            if parts.len() < 2 {
+                app.system_message("Usage: /secure del <name>");
+                return;
+            }
+            let name = parts[1];
+            match vault {
+                Some(v) => {
+                    if v.delete(name) {
+                        if let Err(e) = v.save() {
+                            app.system_message(&format!("Failed to save vault: {}", e));
+                        } else {
+                            app.system_message(&format!("Secret '{}' deleted", name));
+                        }
+                    } else {
+                        app.system_message(&format!("Secret '{}' not found", name));
+                    }
+                }
+                None => app.system_message("Vault not initialized"),
+            }
+        }
+        "list" => match vault {
+            Some(v) => {
+                let names = v.list();
+                if names.is_empty() {
+                    app.system_message("Vault is empty");
+                } else {
+                    app.system_message(&format!("Vault secrets: {}", names.join(", ")));
+                }
+            }
+            None => app.system_message("Vault not initialized"),
+        },
+        "init" => {
+            if vault.is_some() {
+                app.system_message("Vault already exists. Use /secure passphrase to change it.");
+                return;
+            }
+            app.input_mode = InputMode::Passphrase("New vault passphrase".to_string());
+            app.system_message("Enter a passphrase for the new vault:");
+        }
+        "passphrase" => {
+            if vault.is_none() {
+                app.system_message("No vault loaded. Use /secure init to create one.");
+                return;
+            }
+            app.input_mode = InputMode::Passphrase("New vault passphrase".to_string());
+            app.system_message("Enter new passphrase for the vault:");
+        }
+        "unlock" => {
+            if vault.is_some() {
+                app.system_message("Vault is already unlocked");
+                return;
+            }
+            if !flume_core::config::vault_path().exists() {
+                app.system_message("No vault file found. Use /secure init to create one.");
+                return;
+            }
+            app.input_mode = InputMode::Passphrase("Vault passphrase".to_string());
+            app.system_message("Enter vault passphrase:");
+        }
+        _ => app.system_message("Usage: /secure <set|del|list|init|unlock|passphrase>"),
+    }
+}
+
+fn handle_server_command(args: &str, app: &mut App) {
+    use flume_core::config::NetworkEntry;
+
+    let all_args: Vec<&str> = args.split_whitespace().collect();
+    let subcmd = all_args.first().map(|s| s.to_lowercase()).unwrap_or_default();
+
+    match subcmd.as_str() {
+        "add" => {
+            // /server add <name> <address> [port] [-tls|-notls] [-autoconnect]
+            if all_args.len() < 3 {
+                app.system_message("Usage: /server add <name> <address> [port] [-tls|-notls] [-autoconnect]");
+                return;
+            }
+            let name = all_args[1];
+            let address = all_args[2];
+
+            // Parse positional and flags
+            let mut port: Option<u16> = None;
+            let mut force_tls: Option<bool> = None;
+            let mut autoconnect = false;
+
+            for arg in &all_args[3..] {
+                match *arg {
+                    "-tls" => force_tls = Some(true),
+                    "-notls" => force_tls = Some(false),
+                    "-autoconnect" => autoconnect = true,
+                    _ => {
+                        if port.is_none() {
+                            if let Ok(p) = arg.parse::<u16>() {
+                                port = Some(p);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let port = port.unwrap_or(6697);
+            let mut entry = NetworkEntry::new(name.to_string(), address.to_string(), port);
+            if let Some(tls) = force_tls {
+                entry.tls = tls;
+            }
+            entry.autoconnect = autoconnect;
+
+            let tls_str = if entry.tls { "TLS" } else { "plain" };
+            let auto_str = if autoconnect { ", autoconnect" } else { "" };
+            match app.irc_config.add(entry) {
+                Ok(()) => app.system_message(&format!(
+                    "Added network '{}' ({}:{}, {}{}). Use /save to persist.",
+                    name, address, port, tls_str, auto_str
+                )),
+                Err(e) => app.system_message(&format!("Error: {}", e)),
+            }
+        }
+        "remove" | "rm" | "del" => {
+            if all_args.len() < 2 {
+                app.system_message("Usage: /server remove <name>");
+                return;
+            }
+            let name = all_args[1];
+            if app.irc_config.remove(name) {
+                app.system_message(&format!("Removed network '{}'. Use /save to persist.", name));
+            } else {
+                app.system_message(&format!("Network '{}' not found", name));
+            }
+        }
+        "list" | "ls" => {
+            if app.irc_config.networks.is_empty() {
+                app.system_message("No networks configured. Use /server add <name> <address> [port]");
+            } else {
+                let lines: Vec<String> = app.irc_config.networks.iter().map(|entry| {
+                    let tls_str = if entry.tls { "TLS" } else { "plain" };
+                    let auth_str = match entry.auth_method {
+                        flume_core::config::server::AuthMethod::Sasl => "SASL",
+                        flume_core::config::server::AuthMethod::Nickserv => "NickServ",
+                        flume_core::config::server::AuthMethod::None => "none",
+                    };
+                    let auto_str = if entry.autoconnect { " [auto]" } else { "" };
+                    let channels = if entry.autojoin.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", entry.autojoin.join(", "))
+                    };
+                    format!(
+                        "  {} — {}:{} ({}, auth: {}){}{}",
+                        entry.name, entry.address, entry.port, tls_str, auth_str, auto_str, channels
+                    )
+                }).collect();
+
+                app.system_message("Configured networks:");
+                for line in &lines {
+                    app.system_message(line);
+                }
+            }
+        }
+        "set" => {
+            if all_args.len() < 4 {
+                app.system_message("Usage: /server set <name> <key> <value>");
+                return;
+            }
+            let name = all_args[1];
+            let after_name = args.splitn(3, ' ').nth(2).unwrap_or("");
+            let (key, value) = match after_name.find(' ') {
+                Some(pos) => (&after_name[..pos], after_name[pos + 1..].trim()),
+                None => {
+                    app.system_message("Usage: /server set <name> <key> <value>");
+                    return;
+                }
+            };
+
+            match app.irc_config.find_mut(name) {
+                Some(entry) => match entry.set_field(key, value) {
+                    Ok(()) => app.system_message(&format!(
+                        "Set {}.{} = {}. Use /save to persist.",
+                        name, key, value
+                    )),
+                    Err(e) => app.system_message(&format!("Error: {}", e)),
+                },
+                None => app.system_message(&format!("Network '{}' not found", name)),
+            }
+        }
+        "connect" => {
+            if all_args.len() < 2 {
+                app.system_message("Usage: /server connect <name>");
+                return;
+            }
+            let name = all_args[1];
+            if app.irc_config.find(name).is_some()
+                || flume_core::config::load_server_config(name).is_ok()
+            {
+                app.connect_to = Some(name.to_string());
+            } else {
+                app.system_message(&format!("Network '{}' not found", name));
+            }
+        }
+        "switch" => {
+            if all_args.len() < 2 {
+                app.system_message("Usage: /server switch <name>");
+                return;
+            }
+            let name = all_args[1];
+            if app.servers.contains_key(name) {
+                app.switch_server(name);
+            } else {
+                app.system_message(&format!("Server '{}' not connected", name));
+            }
+        }
+        _ => {
+            app.system_message("Usage: /server <add|remove|list|set|connect|switch>");
+        }
+    }
+}
+
+fn show_help(app: &mut App) {
+    app.system_message("Flume commands:");
+    app.system_message("  Chat:");
+    app.system_message("    /join <channel> [key]    — Join a channel");
+    app.system_message("    /part [channel] [msg]    — Leave a channel");
+    app.system_message("    /msg <target> <text>     — Send a private message");
+    app.system_message("    /me <text>               — Send an action");
+    app.system_message("    /notice <target> <text>  — Send a notice");
+    app.system_message("    /topic [channel] [text]  — View or set topic");
+    app.system_message("    /nick <nick>             — Change nickname");
+    app.system_message("    /away [message]          — Set away (no args = clear)");
+    app.system_message("    /back                    — Clear away status");
+    app.system_message("  Channel management:");
+    app.system_message("    /kick <nick> [reason]    — Kick a user");
+    app.system_message("    /ban [mask]              — Ban (no args = list bans)");
+    app.system_message("    /unban <mask>            — Remove a ban");
+    app.system_message("    /op <nick>               — Give operator status");
+    app.system_message("    /deop <nick>             — Remove operator status");
+    app.system_message("    /voice <nick>            — Give voice");
+    app.system_message("    /devoice <nick>          — Remove voice");
+    app.system_message("    /invite <nick> [channel] — Invite a user");
+    app.system_message("    /mode <target> [modes]   — Set/view modes");
+    app.system_message("    /names [channel]         — List channel members");
+    app.system_message("  Queries:");
+    app.system_message("    /whois <nick>            — Query user info");
+    app.system_message("    /who <mask>              — Search users");
+    app.system_message("    /list [pattern]          — List channels");
+    app.system_message("    /motd                    — Show message of the day");
+    app.system_message("    /lusers                  — Show network statistics");
+    app.system_message("    /version [server]        — Show server version");
+    app.system_message("    /ctcp <nick> <cmd>       — Send CTCP request");
+    app.system_message("    /ping <nick>             — CTCP ping a user");
+    app.system_message("  Navigation:");
+    app.system_message("    /buffer <name>           — Switch buffer (or list if no args)");
+    app.system_message("    /switch <server>         — Switch active server");
+    app.system_message("    /close                   — Close active buffer");
+    app.system_message("    /clear                   — Clear active buffer");
+    app.system_message("    /search <pattern>        — Search buffer (no args = clear)");
+    app.system_message("    Ctrl+X                   — Cycle servers");
+    app.system_message("    Alt+Left/Right           — Cycle buffers");
+    app.system_message("    Alt+1-9                  — Jump to buffer by number");
+    app.system_message("  Connection:");
+    app.system_message("    /connect <name>          — Connect to a network");
+    app.system_message("    /disconnect              — Disconnect active server");
+    app.system_message("    /quit [message]          — Quit Flume");
+    app.system_message("  Server management:");
+    app.system_message("    /server add <name> <addr> [port] [-tls|-notls] [-autoconnect]");
+    app.system_message("    /server remove <name>    — Remove a network");
+    app.system_message("    /server list             — List configured networks");
+    app.system_message("    /server set <n> <k> <v>  — Set a network field");
+    app.system_message("    /save                    — Save config to disk");
+    app.system_message("  Vault:");
+    app.system_message("    /secure init             — Create a new vault");
+    app.system_message("    /secure set <n> <v>      — Store a secret");
+    app.system_message("    /secure del <name>       — Delete a secret");
+    app.system_message("    /secure list             — List secret names");
+    app.system_message("  Splits:");
+    app.system_message("    /split v|h <buffer>      — Split view with a buffer");
+    app.system_message("    /unsplit                 — Close split");
+    app.system_message("    /focus                   — Swap focus between panes");
+    app.system_message("    /layout save <name>      — Save current split layout");
+    app.system_message("    /layout load <name>      — Load a saved layout");
+    app.system_message("    /layout list             — List saved layouts");
+    app.system_message("    /layout delete <name>    — Delete a saved layout");
+    app.system_message("  Scripts:");
+    app.system_message("    /script load <name|path> — Load a script");
+    app.system_message("    /script unload <name>    — Unload a script");
+    app.system_message("    /script reload <name>    — Reload a script");
+    app.system_message("    /script list             — List loaded scripts");
+    app.system_message("  DCC:");
+    app.system_message("    /dcc list                — Show DCC transfers");
+    app.system_message("    /dcc accept [id]         — Accept pending DCC");
+    app.system_message("    /dcc reject [id]         — Reject pending DCC");
+    app.system_message("    /dcc send <nick> <file>  — Send a file");
+    app.system_message("    /dcc chat <nick>         — Start DCC CHAT");
+    app.system_message("    /dcc close <id>          — Close transfer/chat");
+    app.system_message("    /xdcc <bot> <pack#>      — Request XDCC pack");
+    app.system_message("    /xdcc <bot> list         — Request bot pack list");
+    app.system_message("    /xdcc <bot> cancel       — Cancel XDCC");
+    app.system_message("  Generate (LLM):");
+    app.system_message("    /generate script <desc>  — Generate a script from description");
+    app.system_message("    /generate theme <desc>   — Generate a theme");
+    app.system_message("    /generate layout <desc>  — Generate a layout");
+    app.system_message("    /generate accept/reject  — Save or discard generation");
+    app.system_message("  Other:");
+    app.system_message("    /quote <raw line>        — Send raw IRC line");
+    app.system_message("    /keys                    — Show keybinding info");
+    app.system_message("    /help                    — Show this help");
+}
+
+fn show_keybindings(app: &mut App) {
+    let mode_name = match app.keybinding_mode {
+        KeybindingMode::Emacs => "Emacs",
+        KeybindingMode::Vi => "Vi",
+        KeybindingMode::Custom => "Custom",
+    };
+    app.system_message(&format!("Keybinding mode: {}", mode_name));
+    app.system_message("  Global (all modes):");
+    app.system_message("    Ctrl+C             — Quit");
+    app.system_message("    Ctrl+X             — Cycle servers");
+    app.system_message("    Alt+1-9            — Jump to buffer");
+    app.system_message("    Alt+Left/Right     — Cycle buffers");
+    app.system_message("    PageUp/Down        — Scroll");
+    app.system_message("    Tab                — Nick completion");
+    app.system_message("    Alt+Tab            — Swap split focus");
+    app.system_message("    Enter              — Submit");
+
+    match app.keybinding_mode {
+        KeybindingMode::Emacs | KeybindingMode::Custom => {
+            app.system_message("  Emacs bindings:");
+            app.system_message("    Ctrl+A / Home      — Start of line");
+            app.system_message("    Ctrl+E / End       — End of line");
+            app.system_message("    Ctrl+B / Left      — Cursor left");
+            app.system_message("    Ctrl+F / Right     — Cursor right");
+            app.system_message("    Alt+B              — Word left");
+            app.system_message("    Alt+F              — Word right");
+            app.system_message("    Ctrl+D / Delete    — Delete forward");
+            app.system_message("    Ctrl+K             — Kill to end of line");
+            app.system_message("    Ctrl+U             — Kill to start of line");
+            app.system_message("    Ctrl+W / Alt+Bksp  — Delete word back");
+            app.system_message("    Ctrl+T             — Transpose chars");
+            app.system_message("    Ctrl+P / Up        — History previous");
+            app.system_message("    Ctrl+N / Down      — History next");
+            app.system_message("    Esc                — Quit");
+        }
+        KeybindingMode::Vi => {
+            app.system_message("  Vi Insert mode:");
+            app.system_message("    Esc                — Enter Normal mode");
+            app.system_message("    Ctrl+W             — Delete word back");
+            app.system_message("    Ctrl+U             — Kill to start of line");
+            app.system_message("    Ctrl+K             — Kill to end of line");
+            app.system_message("  Vi Normal mode:");
+            app.system_message("    i                  — Insert at cursor");
+            app.system_message("    a                  — Insert after cursor");
+            app.system_message("    A                  — Insert at end of line");
+            app.system_message("    I                  — Insert at start of line");
+            app.system_message("    h/l                — Cursor left/right");
+            app.system_message("    w/b                — Word forward/backward");
+            app.system_message("    0/^/$              — Start/end of line");
+            app.system_message("    x/X                — Delete char forward/back");
+            app.system_message("    dd                 — Delete entire line");
+            app.system_message("    cc                 — Change entire line");
+            app.system_message("    C                  — Change to end of line");
+            app.system_message("    j/k                — History next/previous");
+        }
+    }
+    app.system_message("  Set mode in config.toml: [ui.keybindings] mode = \"emacs\"|\"vi\"");
+}
+
+fn handle_split_command(args: &str, app: &mut App) {
+    if args.is_empty() {
+        if let Some(ref s) = app.split {
+            let dir = match s.direction {
+                SplitDirection::Vertical => "vertical",
+                SplitDirection::Horizontal => "horizontal",
+            };
+            app.system_message(&format!(
+                "Active split: {} — {}/{}",
+                dir, s.secondary_server, s.secondary_buffer
+            ));
+        } else {
+            app.system_message("No active split");
+            app.system_message("Usage: /split v|h <buffer> or /split v|h <server>/<buffer>");
+        }
+        return;
+    }
+
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    if parts.len() < 2 {
+        app.system_message("Usage: /split v|h <buffer> or /split v|h <server>/<buffer>");
+        return;
+    }
+
+    let direction = match parts[0] {
+        "v" | "vertical" => SplitDirection::Vertical,
+        "h" | "horizontal" => SplitDirection::Horizontal,
+        _ => {
+            app.system_message("Direction must be 'v' (vertical) or 'h' (horizontal)");
+            return;
+        }
+    };
+
+    let target = parts[1].trim();
+    let (server, buffer) = if let Some(slash) = target.find('/') {
+        // Cross-server split: server/buffer
+        (target[..slash].to_string(), target[slash + 1..].to_string())
+    } else {
+        // Same server
+        let server = app.active_server.clone().unwrap_or_default();
+        (server, target.to_string())
+    };
+
+    // Verify the target exists
+    if let Some(ss) = app.servers.get(&server) {
+        if ss.buffers.contains_key(&buffer) {
+            app.split = Some(SplitState::new(direction, server.clone(), buffer.clone()));
+            let dir_name = match direction {
+                SplitDirection::Vertical => "vertical",
+                SplitDirection::Horizontal => "horizontal",
+            };
+            app.system_message(&format!("Split {} with {}/{}", dir_name, server, buffer));
+        } else {
+            app.system_message(&format!("Buffer '{}' not found on server '{}'", buffer, server));
+        }
+    } else {
+        app.system_message(&format!("Server '{}' not found", server));
+    }
+}
+
+fn handle_layout_command(args: &str, app: &mut App) {
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    let subcmd = parts.first().copied().unwrap_or("");
+    let name = parts.get(1).copied().unwrap_or("").trim();
+
+    match subcmd {
+        "save" => {
+            if name.is_empty() {
+                app.system_message("Usage: /layout save <name>");
+                return;
+            }
+            let Some(ref s) = app.split else {
+                app.system_message("No active split to save");
+                return;
+            };
+            let primary = app
+                .active_server_state()
+                .map(|ss| ss.active_buffer.clone())
+                .unwrap_or_default();
+            let profile = LayoutProfile {
+                direction: s.direction,
+                primary,
+                secondary: s.secondary_buffer.clone(),
+                ratio: s.ratio,
+            };
+            match split::save_layout(name, &profile) {
+                Ok(()) => app.system_message(&format!("Layout '{}' saved", name)),
+                Err(e) => app.system_message(&format!("Failed to save layout: {}", e)),
+            }
+        }
+        "load" => {
+            if name.is_empty() {
+                app.system_message("Usage: /layout load <name>");
+                return;
+            }
+            match split::load_layout(name) {
+                Some(profile) => {
+                    let server = app.active_server.clone().unwrap_or_default();
+                    // Switch active buffer to the primary
+                    if let Some(ss) = app.active_server_state_mut() {
+                        if ss.buffers.contains_key(&profile.primary) {
+                            ss.switch_buffer(&profile.primary);
+                        }
+                    }
+                    // Set up split with the secondary
+                    if app
+                        .servers
+                        .get(&server)
+                        .is_some_and(|ss| ss.buffers.contains_key(&profile.secondary))
+                    {
+                        app.split = Some(SplitState::new(
+                            profile.direction,
+                            server,
+                            profile.secondary.clone(),
+                        ));
+                        app.system_message(&format!("Layout '{}' loaded", name));
+                    } else {
+                        app.system_message(&format!(
+                            "Buffer '{}' not found on active server",
+                            profile.secondary
+                        ));
+                    }
+                }
+                None => app.system_message(&format!("Layout '{}' not found", name)),
+            }
+        }
+        "list" | "ls" => {
+            let layouts = split::list_layouts();
+            if layouts.is_empty() {
+                app.system_message("No saved layouts");
+            } else {
+                app.system_message("Saved layouts:");
+                for name in &layouts {
+                    app.system_message(&format!("  {}", name));
+                }
+            }
+        }
+        "delete" | "del" | "rm" => {
+            if name.is_empty() {
+                app.system_message("Usage: /layout delete <name>");
+                return;
+            }
+            if split::delete_layout(name) {
+                app.system_message(&format!("Layout '{}' deleted", name));
+            } else {
+                app.system_message(&format!("Layout '{}' not found", name));
+            }
+        }
+        _ => {
+            app.system_message("Usage: /layout save|load|list|delete <name>");
+        }
+    }
+}
+
+fn handle_dcc_command(args: &str, app: &mut App) {
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    let subcmd = parts.first().copied().unwrap_or("");
+    let rest = parts.get(1).copied().unwrap_or("").trim();
+
+    match subcmd {
+        "list" | "ls" | "" => {
+            if app.dcc_transfers.is_empty() {
+                app.system_message("No DCC transfers");
+            } else {
+                let lines: Vec<String> = app.dcc_transfers.iter().map(|t| {
+                    let kind = match t.offer.dcc_type {
+                        flume_core::dcc::DccType::Send => "SEND",
+                        flume_core::dcc::DccType::Chat => "CHAT",
+                    };
+                    let name = t.offer.filename.as_deref().unwrap_or("(chat)");
+                    let status = match &t.state {
+                        flume_core::dcc::DccTransferState::Pending => "pending".to_string(),
+                        flume_core::dcc::DccTransferState::Connecting => "connecting".to_string(),
+                        flume_core::dcc::DccTransferState::Active { bytes_transferred, total } => {
+                            if *total > 0 {
+                                format!("{}%", (*bytes_transferred * 100) / total)
+                            } else {
+                                flume_core::dcc::format_size(*bytes_transferred)
+                            }
+                        }
+                        flume_core::dcc::DccTransferState::Complete => "complete".to_string(),
+                        flume_core::dcc::DccTransferState::Failed(e) => format!("failed: {}", e),
+                        flume_core::dcc::DccTransferState::Cancelled => "cancelled".to_string(),
+                    };
+                    let dir = if t.outgoing { ">>>" } else { "<<<" };
+                    format!("  [{}] {} {} {} {} — {}", t.id, kind, dir, t.offer.from, name, status)
+                }).collect();
+                app.system_message("DCC transfers:");
+                for line in &lines {
+                    app.system_message(line);
+                }
+            }
+        }
+        "accept" => {
+            // Accept most recent pending, or by ID
+            let id: Option<u64> = if rest.is_empty() {
+                app.dcc_transfers
+                    .iter()
+                    .rev()
+                    .find(|t| matches!(t.state, flume_core::dcc::DccTransferState::Pending))
+                    .map(|t| t.id)
+            } else {
+                rest.parse().ok()
+            };
+            match id {
+                Some(id) => {
+                    app.dcc_command = Some(format!("accept {}", id));
+                }
+                None => {
+                    app.system_message("No pending DCC transfer to accept");
+                }
+            }
+        }
+        "reject" => {
+            let id: Option<u64> = if rest.is_empty() {
+                app.dcc_transfers
+                    .iter()
+                    .rev()
+                    .find(|t| matches!(t.state, flume_core::dcc::DccTransferState::Pending))
+                    .map(|t| t.id)
+            } else {
+                rest.parse().ok()
+            };
+            if let Some(id) = id {
+                if let Some(t) = app.dcc_transfers.iter_mut().find(|t| t.id == id) {
+                    t.state = flume_core::dcc::DccTransferState::Cancelled;
+                    app.system_message(&format!("DCC #{} rejected", id));
+                }
+            } else {
+                app.system_message("No pending DCC transfer to reject");
+            }
+        }
+        "send" => {
+            // /dcc send <nick> <file>
+            let send_parts: Vec<&str> = rest.splitn(2, ' ').collect();
+            if send_parts.len() < 2 {
+                app.system_message("Usage: /dcc send <nick> <file>");
+                return;
+            }
+            app.dcc_command = Some(format!("send {} {}", send_parts[0], send_parts[1]));
+        }
+        "chat" => {
+            if rest.is_empty() {
+                app.system_message("Usage: /dcc chat <nick>");
+                return;
+            }
+            app.dcc_command = Some(format!("chat {}", rest));
+        }
+        "close" => {
+            let id: Option<u64> = rest.parse().ok();
+            if let Some(id) = id {
+                if let Some(t) = app.dcc_transfers.iter_mut().find(|t| t.id == id) {
+                    t.state = flume_core::dcc::DccTransferState::Cancelled;
+                    app.dcc_chat_senders.remove(&id);
+                    app.system_message(&format!("DCC #{} closed", id));
+                }
+            } else {
+                app.system_message("Usage: /dcc close <id>");
+            }
+        }
+        _ => {
+            app.system_message("Usage: /dcc list|accept|reject|send|chat|close [args]");
+        }
+    }
+}
+
+async fn handle_xdcc_command(args: &str, app: &mut App) {
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    if parts.len() < 2 {
+        app.system_message("Usage: /xdcc <bot> <pack#|list|cancel>");
+        return;
+    }
+    let bot = parts[0];
+    let subcmd = parts[1].trim();
+
+    let message = if subcmd == "list" {
+        flume_core::dcc::xdcc::request_list()
+    } else if subcmd == "cancel" {
+        flume_core::dcc::xdcc::request_cancel()
+    } else {
+        // Try to parse as pack number (with or without #)
+        let num_str = subcmd.trim_start_matches('#');
+        match num_str.parse::<u32>() {
+            Ok(n) => flume_core::dcc::xdcc::request_pack(n),
+            Err(_) => {
+                app.system_message("Usage: /xdcc <bot> <pack#|list|cancel>");
+                return;
+            }
+        }
+    };
+
+    send_cmd(
+        app,
+        flume_core::event::UserCommand::SendMessage {
+            target: bot.to_string(),
+            text: message,
+        },
+    )
+    .await;
+    app.system_message(&format!("XDCC request sent to {}", bot));
+}
+
+fn handle_generate_command(args: &str, app: &mut App) {
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    let subcmd = parts.first().copied().unwrap_or("");
+
+    match subcmd {
+        "accept" => {
+            if app.pending_generation.is_some() {
+                // Signal main loop to save and load the generation
+                app.script_command = Some("_accept_generation".to_string());
+            } else {
+                app.system_message("No pending generation to accept");
+            }
+        }
+        "reject" => {
+            if app.pending_generation.take().is_some() {
+                app.system_message("Generation discarded");
+            } else {
+                app.system_message("No pending generation to reject");
+            }
+        }
+        "script" => {
+            if app.generating {
+                app.system_message("Generation already in progress...");
+                return;
+            }
+            let rest = parts.get(1).copied().unwrap_or("").trim();
+            let (language, description) = if rest.starts_with("--python ") || rest.starts_with("--py ") {
+                let desc = rest.split_once(' ').map(|x| x.1).unwrap_or("");
+                (Some("python".to_string()), desc.to_string())
+            } else if rest.starts_with("--lua ") {
+                let desc = rest.split_once(' ').map(|x| x.1).unwrap_or("");
+                (Some("lua".to_string()), desc.to_string())
+            } else {
+                (Some("lua".to_string()), rest.to_string())
+            };
+
+            if description.is_empty() {
+                app.system_message("Usage: /generate script [--lua|--python] <description>");
+                return;
+            }
+
+            app.generate_request = Some(GenerateRequest {
+                kind: GenerationKind::Script,
+                language,
+                description,
+            });
+            app.system_message("Generating script...");
+        }
+        "theme" => {
+            if app.generating {
+                app.system_message("Generation already in progress...");
+                return;
+            }
+            let description = parts.get(1).copied().unwrap_or("").trim().to_string();
+            if description.is_empty() {
+                app.system_message("Usage: /generate theme <description>");
+                return;
+            }
+            app.generate_request = Some(GenerateRequest {
+                kind: GenerationKind::Theme,
+                language: None,
+                description,
+            });
+            app.system_message("Generating theme...");
+        }
+        "layout" => {
+            if app.generating {
+                app.system_message("Generation already in progress...");
+                return;
+            }
+            let description = parts.get(1).copied().unwrap_or("").trim().to_string();
+            if description.is_empty() {
+                app.system_message("Usage: /generate layout <description>");
+                return;
+            }
+            app.generate_request = Some(GenerateRequest {
+                kind: GenerationKind::Layout,
+                language: None,
+                description,
+            });
+            app.system_message("Generating layout...");
+        }
+        "" => {
+            app.system_message("Usage: /generate script|theme|layout <description>");
+            app.system_message("  /generate script [--lua|--python] <what you want>");
+            app.system_message("  /generate theme <describe the look>");
+            app.system_message("  /generate layout <describe the split>");
+            app.system_message("  /generate accept  — save pending generation");
+            app.system_message("  /generate reject  — discard pending generation");
+        }
+        _ => {
+            app.system_message("Usage: /generate script|theme|layout <description>");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_boundary_left_basic() {
+        assert_eq!(word_boundary_left("hello world", 11), 6);
+        assert_eq!(word_boundary_left("hello world", 6), 0);
+        assert_eq!(word_boundary_left("hello world", 5), 0);
+        assert_eq!(word_boundary_left("hello world", 0), 0);
+    }
+
+    #[test]
+    fn word_boundary_left_multiple_spaces() {
+        assert_eq!(word_boundary_left("foo  bar  baz", 13), 10);
+        assert_eq!(word_boundary_left("foo  bar  baz", 9), 5);
+    }
+
+    #[test]
+    fn word_boundary_right_basic() {
+        assert_eq!(word_boundary_right("hello world", 0), 6);
+        assert_eq!(word_boundary_right("hello world", 6), 11);
+        assert_eq!(word_boundary_right("hello world", 11), 11);
+    }
+
+    #[test]
+    fn word_boundary_right_multiple_spaces() {
+        assert_eq!(word_boundary_right("foo  bar  baz", 0), 5);
+        assert_eq!(word_boundary_right("foo  bar  baz", 5), 10);
+    }
+
+    #[test]
+    fn word_boundary_empty_string() {
+        assert_eq!(word_boundary_left("", 0), 0);
+        assert_eq!(word_boundary_right("", 0), 0);
+    }
+
+    #[test]
+    fn word_boundary_single_word() {
+        assert_eq!(word_boundary_left("hello", 5), 0);
+        assert_eq!(word_boundary_right("hello", 0), 5);
+    }
+}

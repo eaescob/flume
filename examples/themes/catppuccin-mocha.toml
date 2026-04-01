@@ -1,0 +1,54 @@
+[meta]
+name = "Catppuccin Mocha"
+author = "Catppuccin (adapted for Flume)"
+
+[colors]
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+highlight = "#f9e2af"
+error = "#f38ba8"
+warning = "#fab387"
+success = "#a6e3a1"
+
+[nick_colors]
+palette = [
+    "#f38ba8",
+    "#fab387",
+    "#f9e2af",
+    "#a6e3a1",
+    "#94e2d5",
+    "#89b4fa",
+    "#cba6f7",
+    "#f5c2e7",
+]
+
+[elements]
+title_bar_bg = "#313244"
+title_bar_fg = "#cdd6f4"
+status_bar_bg = "#313244"
+status_bar_fg = "#cdd6f4"
+input_bg = "#1e1e2e"
+input_fg = "#cdd6f4"
+nick_list_bg = "#1e1e2e"
+nick_list_fg = "#6c7086"
+nick_list_op = "#a6e3a1"
+nick_list_voice = "#94e2d5"
+chat_timestamp = "#6c7086"
+chat_nick = "#cdd6f4"
+chat_message = "#cdd6f4"
+chat_own_nick = "#a6e3a1"
+chat_action = "#cba6f7"
+chat_notice = "#89b4fa"
+chat_server = "#89b4fa"
+chat_system = "#f9e2af"
+chat_highlight = "#f9e2af"
+chat_url = "#89dceb"
+unread = "#fab387"
+inactive = "#6c7086"
+active = "#bac2de"
+scroll_indicator = "#f9e2af"
+search_match_bg = "#313244"
+search_match_fg = "#bac2de"
+state_connected = "#a6e3a1"
+state_connecting = "#f9e2af"
+state_disconnected = "#f38ba8"

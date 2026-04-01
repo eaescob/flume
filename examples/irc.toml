@@ -1,0 +1,27 @@
+## Flume IRC Networks
+## Add networks with /server add <name> <address> [port] in the client,
+## or edit this file directly. Use /save in the client to persist changes.
+
+[[network]]
+name = "libera"
+address = "irc.libera.chat"
+port = 6697
+tls = true
+auth_method = "sasl"
+sasl_mechanism = "PLAIN"
+sasl_username = "emilio"
+# Use ${secret_name} to reference secrets stored in the vault
+# Set secrets with: /secure set libera_pass <password>
+sasl_password = "${libera_pass}"
+autojoin = ["#rust", "#linux", "#flume"]
+flood_delay_ms = 500
+reconnect_attempts = 10
+reconnect_delay_ms = 5000
+
+[[network]]
+name = "efnet"
+address = "irc.efnet.org"
+port = 6667
+tls = false
+auth_method = "none"
+autojoin = ["#test"]

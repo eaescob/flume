@@ -1,0 +1,37 @@
+[general]
+default_nick = "emilio"
+alt_nicks = ["emilio_", "emilio__"]
+realname = "Emilio"
+username = "emilio"
+quit_message = "Flume — https://github.com/emilio/flume"
+timestamp_format = "%H:%M:%S"
+scrollback_lines = 10000
+url_open_command = "open"
+
+[ui]
+theme = "default"
+layout = "default"
+show_server_tree = true
+show_nick_list = true
+server_tree_width = 20
+nick_list_width = 18
+input_history_size = 500
+tick_rate_fps = 30
+
+[logging]
+enabled = true
+format = "plain"
+rotate = "daily"
+
+[notifications]
+highlight_bell = true
+highlight_words = ["emilio", "flume"]
+notify_private = true
+notify_highlight = true
+
+[ctcp]
+version_reply = "Flume 0.1.0"
+respond_to_version = true
+respond_to_ping = true
+respond_to_time = true
+rate_limit = 3

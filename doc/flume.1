@@ -1,0 +1,161 @@
+.TH FLUME 1 "2026-04-01" "Flume 1.0.0" "User Commands"
+.SH NAME
+flume \- modern terminal IRC client
+.SH SYNOPSIS
+.B flume
+[\fB\-\-server\fR \fIname\fR]
+.SH DESCRIPTION
+Flume is a fast, modern, terminal-based IRC client built in Rust. It supports
+multi-server connections, a rich TUI with theming and split views, a dual
+scripting engine (Lua and Python), and LLM-powered script generation.
+.SH OPTIONS
+.TP
+.BR \-\-server " " \fIname\fR
+Connect to a specific server on startup (by network name from irc.toml).
+.SH COMMANDS
+.SS Chat
+.TP
+.B /join \fIchannel\fR [\fIkey\fR]
+Join a channel.
+.TP
+.B /part [\fIchannel\fR] [\fImessage\fR]
+Leave a channel.
+.TP
+.B /msg \fItarget\fR \fItext\fR
+Send a private message.
+.TP
+.B /me \fItext\fR
+Send an action.
+.TP
+.B /nick \fInick\fR
+Change nickname.
+.TP
+.B /quit [\fImessage\fR]
+Quit Flume.
+.SS Navigation
+.TP
+.B /buffer \fIname\fR
+Switch to a buffer.
+.TP
+.B /switch \fIserver\fR
+Switch to a server.
+.TP
+.B /close
+Close the active buffer.
+.TP
+.B /search \fIpattern\fR
+Search buffer contents.
+.SS Splits
+.TP
+.B /split v|h \fIbuffer\fR
+Split the view vertically or horizontally.
+.TP
+.B /unsplit
+Close the split view.
+.TP
+.B /focus
+Swap focus between split panes.
+.TP
+.B /layout save|load|list|delete \fIname\fR
+Manage saved split layouts.
+.SS Scripting
+.TP
+.B /script load \fIname\fR
+Load a Lua or Python script.
+.TP
+.B /script unload \fIname\fR
+Unload a script.
+.TP
+.B /script list
+List loaded scripts.
+.SS Generation (LLM)
+.TP
+.B /generate script \fIdescription\fR
+Generate a Lua script from a natural language description.
+.TP
+.B /generate theme \fIdescription\fR
+Generate a theme from a description.
+.TP
+.B /generate accept|reject
+Accept or discard the generated content.
+.SS DCC
+.TP
+.B /dcc list
+Show DCC transfers.
+.TP
+.B /dcc accept [\fIid\fR]
+Accept a DCC offer.
+.TP
+.B /dcc send \fInick\fR \fIfile\fR
+Send a file via DCC.
+.TP
+.B /xdcc \fIbot\fR \fIpack#\fR
+Request an XDCC pack.
+.SS Server Management
+.TP
+.B /server add \fIname\fR \fIaddress\fR [\fIport\fR] [\fI-tls|-notls\fR] [\fI-autoconnect\fR]
+Add a network.
+.TP
+.B /server list
+List configured networks.
+.TP
+.B /save
+Save configuration to disk.
+.SS Vault
+.TP
+.B /secure set \fIname\fR \fIvalue\fR
+Store a secret in the vault.
+.TP
+.B /secure list
+List stored secrets.
+.SH KEYBINDINGS
+.TP
+.B Ctrl+C
+Quit.
+.TP
+.B Ctrl+X
+Cycle servers.
+.TP
+.B Alt+1-9
+Jump to buffer by number.
+.TP
+.B Alt+Left/Right
+Cycle buffers.
+.TP
+.B PageUp/Down
+Scroll buffer.
+.TP
+.B Tab
+Nick completion.
+.PP
+Keybinding mode is configurable: Emacs (default) or Vi. Set in config.toml:
+.br
+[ui.keybindings]
+.br
+mode = "emacs"  # or "vi"
+.SH FILES
+.TP
+.I ~/.config/flume/config.toml
+Main configuration file.
+.TP
+.I ~/.config/flume/irc.toml
+Network/server definitions.
+.TP
+.I ~/.config/flume/themes/
+Theme files.
+.TP
+.I ~/.config/flume/scripts/autoload/
+Scripts loaded automatically on startup.
+.TP
+.I ~/.local/share/flume/vault.toml
+Encrypted secrets vault.
+.TP
+.I ~/.local/share/flume/logs/
+IRC message logs.
+.SH AUTHOR
+Emilio Escobar
+.SH LICENSE
+BSD-3-Clause
+.SH SEE ALSO
+.BR irssi (1),
+.BR weechat (1)

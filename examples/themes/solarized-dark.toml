@@ -1,0 +1,54 @@
+[meta]
+name = "Solarized Dark"
+author = "Ethan Schoonover (adapted for Flume)"
+
+[colors]
+background = "#002b36"
+foreground = "#839496"
+highlight = "#b58900"
+error = "#dc322f"
+warning = "#cb4b16"
+success = "#859900"
+
+[nick_colors]
+palette = [
+    "#dc322f",
+    "#cb4b16",
+    "#b58900",
+    "#859900",
+    "#2aa198",
+    "#268bd2",
+    "#6c71c4",
+    "#d33682",
+]
+
+[elements]
+title_bar_bg = "#073642"
+title_bar_fg = "#93a1a1"
+status_bar_bg = "#073642"
+status_bar_fg = "#93a1a1"
+input_bg = "#002b36"
+input_fg = "#839496"
+nick_list_bg = "#002b36"
+nick_list_fg = "#586e75"
+nick_list_op = "#859900"
+nick_list_voice = "#2aa198"
+chat_timestamp = "#586e75"
+chat_nick = "#839496"
+chat_message = "#839496"
+chat_own_nick = "#859900"
+chat_action = "#6c71c4"
+chat_notice = "#268bd2"
+chat_server = "#268bd2"
+chat_system = "#b58900"
+chat_highlight = "#b58900"
+chat_url = "#268bd2"
+unread = "#cb4b16"
+inactive = "#586e75"
+active = "#eee8d5"
+scroll_indicator = "#b58900"
+search_match_bg = "#073642"
+search_match_fg = "#eee8d5"
+state_connected = "#859900"
+state_connecting = "#b58900"
+state_disconnected = "#dc322f"

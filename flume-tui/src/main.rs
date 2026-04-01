@@ -430,7 +430,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Check if /script was requested
                 if let Some(args) = app.script_command.take() {
                     if let Some(ref mut mgr) = script_manager {
-                        handle_script_command(&args, mgr, &mut app);
+                        handle_script_command(&args, mgr, &mut app, &mut vault);
                     } else {
                         app.system_message("Script engine not available");
                     }
@@ -669,7 +669,7 @@ fn send_desktop_notification(title: &str, body: &str) {
 }
 
 /// Handle /script subcommands.
-fn handle_script_command(args: &str, mgr: &mut ScriptManager, app: &mut app::App) {
+fn handle_script_command(args: &str, mgr: &mut ScriptManager, app: &mut app::App, vault: &mut Option<Vault>) {
     let parts: Vec<&str> = args.splitn(2, ' ').collect();
     let subcmd = parts.first().copied().unwrap_or("");
     let rest = parts.get(1).copied().unwrap_or("").trim();
@@ -720,6 +720,38 @@ fn handle_script_command(args: &str, mgr: &mut ScriptManager, app: &mut app::App
                         }
                     }
                 }
+            }
+            return;
+        }
+        // Internal: store LLM API key in vault during /generate init
+        "_init_llm_key" => {
+            let key = rest.trim();
+            if key.is_empty() {
+                app.system_message("No API key provided");
+                return;
+            }
+            // Ensure vault exists
+            if vault.is_none() {
+                app.system_message("Creating vault...");
+                let path = flume_core::config::vault_path();
+                let v = flume_core::config::vault::Vault::new(path, "flume".to_string());
+                let _ = v.save();
+                *vault = Some(v);
+                app.vault_unlocked = true;
+            }
+            if let Some(ref mut v) = vault {
+                v.set("flume_llm_key".to_string(), key.to_string());
+                if let Err(e) = v.save() {
+                    app.system_message(&format!("Failed to save vault: {}", e));
+                    return;
+                }
+                app.system_message("API key stored in vault as 'flume_llm_key'");
+                app.system_message("");
+                app.system_message("Setup complete! Try it out:");
+                app.system_message("  /generate script greet users who join my channel");
+                app.system_message("  /generate theme dark mode with blue accents");
+                app.system_message("");
+                app.system_message("Note: restart Flume to load the new LLM config.");
             }
             return;
         }

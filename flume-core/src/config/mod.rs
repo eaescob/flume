@@ -24,28 +24,26 @@ pub enum ConfigError {
     ServerNotFound(String),
 }
 
-/// Return the XDG config directory for flume.
-/// Falls back to `~/.config/flume/`.
+/// Return the config directory for flume.
+/// Uses $XDG_CONFIG_HOME/flume (default: ~/.config/flume) on all platforms.
 pub fn config_dir() -> PathBuf {
-    directories::ProjectDirs::from("", "", "flume")
-        .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| {
-            let mut p = dirs_home().unwrap_or_else(|| PathBuf::from("."));
-            p.push(".config/flume");
-            p
-        })
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(xdg).join("flume");
+    }
+    let mut p = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+    p.push(".config/flume");
+    p
 }
 
-/// Return the XDG data directory for flume.
-/// Falls back to `~/.local/share/flume/`.
+/// Return the data directory for flume.
+/// Uses $XDG_DATA_HOME/flume (default: ~/.local/share/flume) on all platforms.
 pub fn data_dir() -> PathBuf {
-    directories::ProjectDirs::from("", "", "flume")
-        .map(|d| d.data_dir().to_path_buf())
-        .unwrap_or_else(|| {
-            let mut p = dirs_home().unwrap_or_else(|| PathBuf::from("."));
-            p.push(".local/share/flume");
-            p
-        })
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return PathBuf::from(xdg).join("flume");
+    }
+    let mut p = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+    p.push(".local/share/flume");
+    p
 }
 
 /// Return the path to the vault file.

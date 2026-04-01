@@ -342,6 +342,8 @@ pub struct App {
     pub generate_request: Option<GenerateRequest>,
     /// True while an LLM generation is in flight.
     pub generating: bool,
+    /// Interactive /generate init step (None = not in init flow).
+    pub generate_init_step: Option<u8>,
     /// Active DCC transfers.
     pub dcc_transfers: Vec<DccTransfer>,
     /// Pending DCC command (processed in main loop).
@@ -403,6 +405,7 @@ impl App {
             pending_generation: None,
             generate_request: None,
             generating: false,
+            generate_init_step: None,
             dcc_transfers: Vec::new(),
             dcc_command: None,
             dcc_chat_senders: HashMap::new(),

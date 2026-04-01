@@ -507,6 +507,12 @@ async fn process_input(
     app: &mut App,
     vault: &mut Option<Vault>,
 ) {
+    // Handle interactive /generate init flow
+    if let Some(step) = app.generate_init_step {
+        handle_generate_init_input(text.trim(), step, app);
+        return;
+    }
+
     if text.starts_with('/') {
         let rest = &text[1..];
         let (cmd, args) = match rest.find(' ') {
@@ -2024,25 +2030,68 @@ async fn handle_xdcc_command(args: &str, app: &mut App) {
     app.system_message(&format!("XDCC request sent to {}", bot));
 }
 
+fn handle_generate_init_input(text: &str, step: u8, app: &mut App) {
+    match step {
+        // Step 1: Choose provider
+        1 => {
+            let (provider, default_model) = match text {
+                "1" | "anthropic" => ("anthropic", "claude-sonnet-4-20250514"),
+                "2" | "openai" => ("openai", "gpt-4o"),
+                _ => {
+                    app.system_message("Please type 1 (Anthropic) or 2 (OpenAI):");
+                    return;
+                }
+            };
+            // Save provider choice to config
+            let config_dir = flume_core::config::config_dir();
+            let _ = std::fs::create_dir_all(&config_dir);
+            let config_path = config_dir.join("config.toml");
+            let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
+            let mut config: toml::Table = toml::from_str(&existing).unwrap_or_default();
+
+            let llm = config.entry("llm").or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(ref mut t) = llm {
+                t.insert("provider".to_string(), toml::Value::String(provider.to_string()));
+                t.insert("model".to_string(), toml::Value::String(default_model.to_string()));
+            }
+
+            if let Ok(toml_str) = toml::to_string_pretty(&config) {
+                let _ = std::fs::write(&config_path, toml_str);
+            }
+
+            app.system_message(&format!("Provider set to {} (model: {})", provider, default_model));
+            app.system_message("");
+            app.system_message("Now paste your API key (it will be stored in the encrypted vault):");
+            app.generate_init_step = Some(2);
+        }
+        // Step 2: Store API key
+        2 => {
+            if text.is_empty() || text.starts_with('/') {
+                app.system_message("Please paste your API key:");
+                return;
+            }
+            // Store in vault via script_command (processed in main loop with vault access)
+            app.script_command = Some(format!("_init_llm_key {}", text));
+            app.generate_init_step = None;
+        }
+        _ => {
+            app.generate_init_step = None;
+        }
+    }
+}
+
 fn handle_generate_command(args: &str, app: &mut App) {
     let parts: Vec<&str> = args.splitn(2, ' ').collect();
     let subcmd = parts.first().copied().unwrap_or("");
 
     match subcmd {
         "init" | "setup" => {
-            app.system_message("LLM Generation Setup:");
-            app.system_message("  1. Choose your provider in config.toml:");
-            app.system_message("     [llm]");
-            app.system_message("     provider = \"anthropic\"  # or \"openai\"");
-            app.system_message("     model = \"claude-sonnet-4-20250514\"");
-            app.system_message("");
-            app.system_message("  2. Store your API key in the vault:");
-            app.system_message("     /secure init              (if vault not created)");
-            app.system_message("     /secure set flume_llm_key YOUR_API_KEY");
-            app.system_message("");
-            app.system_message("  3. Try it out:");
-            app.system_message("     /generate script greet users who join my channel");
-            app.system_message("     /generate theme dark mode with blue accents");
+            app.system_message("LLM Generation Setup");
+            app.system_message("Choose your provider:");
+            app.system_message("  1) Anthropic (Claude)");
+            app.system_message("  2) OpenAI (GPT)");
+            app.system_message("Type 1 or 2:");
+            app.generate_init_step = Some(1);
         }
         "accept" => {
             if app.pending_generation.is_some() {

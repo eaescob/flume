@@ -2,7 +2,9 @@
 
 A modern, fast, terminal-based IRC client built in Rust.
 
-Flume supports multi-server connections, a rich TUI with theming and split views, vi/emacs keybinding modes, a dual scripting engine (Lua and Python), LLM-powered script and theme generation, DCC file transfers, and XDCC support.
+Flume supports multi-server connections, a rich TUI with theming and split views, vi/emacs keybinding modes, a dual scripting engine (Lua and Python), LLM-powered script and theme generation, DCC file transfers, XDCC, and emoji shortcodes.
+
+**[Documentation](https://docs.flumeirc.io)** | **[GitHub](https://github.com/FlumeIRC/flume)**
 
 ## Features
 
@@ -15,6 +17,7 @@ Flume supports multi-server connections, a rich TUI with theming and split views
 - **LLM generation** — describe what you want in plain English and Flume writes the script, theme, or layout for you (bring your own API key)
 - **DCC** — file transfers (send/receive/resume), DCC CHAT, XDCC bot support, passive DCC for NAT
 - **Bouncer support** — ZNC and Soju with buffer playback
+- **Emoji shortcodes** — type `:thumbsup:` to send :thumbsup:, tab-complete with `:thu` + Tab
 - **Secure vault** — encrypted secret storage for passwords and API keys
 
 ## Install
@@ -44,7 +47,7 @@ Requires Python 3.10+ development headers.
 ### Homebrew (macOS/Linux)
 
 ```sh
-brew install emilio/tap/flume
+brew install FlumeIRC/tap/flume
 ```
 
 ### Arch Linux (AUR)
@@ -84,17 +87,24 @@ flume-tui
 /join #flume
 ```
 
-## Configuration
+## File Locations
 
-Config files live in `~/.config/flume/`:
+```
+~/.config/flume/               # Configuration
+  config.toml                  # Main settings
+  irc.toml                     # Network definitions
 
-| File | Purpose |
-|------|---------|
-| `config.toml` | Main settings (UI, keybindings, notifications, LLM, DCC) |
-| `irc.toml` | Network/server definitions |
-| `themes/` | Theme files (TOML) |
-| `scripts/autoload/` | Scripts loaded on startup |
-| `scripts/available/` | Installed scripts (load manually) |
+~/.local/share/flume/          # Data
+  themes/                      # Theme files
+  layouts/                     # Saved split layouts
+  scripts/
+    lua/autoload/              # Lua scripts loaded on startup
+    python/autoload/           # Python scripts loaded on startup
+    available/                 # Installed but not auto-loaded
+    generated/                 # Created by /generate
+  vault.toml                   # Encrypted secrets
+  logs/                        # IRC message logs
+```
 
 ### Example config.toml
 
@@ -105,6 +115,8 @@ quit_message = "Flume IRC"
 
 [ui]
 theme = "solarized-dark"
+show_join_part = true
+show_hostmask_on_join = true
 
 [ui.keybindings]
 mode = "vi"  # or "emacs"
@@ -122,15 +134,15 @@ download_directory = "~/Downloads/flume"
 passive = true
 ```
 
-### LLM Setup
+## LLM Setup
 
-Store your API key in the vault:
+Interactive setup:
 
 ```
-/secure set flume_llm_key sk-your-api-key
+/generate init
 ```
 
-Then generate scripts, themes, or layouts:
+This walks you through choosing a provider and storing your API key. Then:
 
 ```
 /generate script auto-respond when someone says hello in #general
@@ -142,7 +154,7 @@ Then generate scripts, themes, or layouts:
 
 Flume supports both Lua and Python scripts with the same API:
 
-**Lua:**
+**Lua** (`~/.local/share/flume/scripts/lua/autoload/hello.lua`):
 ```lua
 flume.event.on("message", function(e)
     if e.text:find("hello") then
@@ -151,7 +163,7 @@ flume.event.on("message", function(e)
 end)
 ```
 
-**Python:**
+**Python** (`~/.local/share/flume/scripts/python/autoload/hello.py`):
 ```python
 import flume
 
@@ -162,7 +174,28 @@ def on_message(e):
 flume.event.on("message", on_message)
 ```
 
+Scripts can register custom commands with help text:
+
+```lua
+flume.command.register("greet", function(args)
+    flume.buffer.print("", "", "Hello " .. args)
+end, "Greet someone by name")
+```
+
+Then `/help greet` shows the help text.
+
 See `examples/scripts/` for more examples.
+
+## Emoji
+
+Type `:shortcode:` in messages — they're replaced with emoji on send:
+
+```
+:thumbsup: → 👍    :fire: → 🔥    :wave: → 👋    :heart: → ❤️
+:rocket: → 🚀     :100: → 💯     :tada: → 🎉    :coffee: → ☕
+```
+
+Tab-complete: type `:thu` then Tab to cycle through matches. Search with `/emoji fire`.
 
 ## Keybindings
 
@@ -174,9 +207,23 @@ See `examples/scripts/` for more examples.
 | `Alt+Left/Right` | Cycle buffers |
 | `Alt+Tab` | Swap split focus |
 | `PageUp/Down` | Scroll |
-| `Tab` | Nick completion |
+| `Tab` | Nick / emoji completion |
 
 Emacs mode adds `Ctrl+A/E/B/F/D/K/U/W/P/N` and `Alt+B/F`. Vi mode adds normal/insert modes with `h/j/k/l/w/b/i/a/A` and more.
+
+## Commands
+
+Use `/help` for the full list, or `/help <command>` for details on any command.
+
+| Command | Description |
+|---------|-------------|
+| `/go <name or #>` | Jump to buffer by name or number |
+| `/split v\|h <buf>` | Split view |
+| `/script load <name>` | Load a script |
+| `/generate script <desc>` | AI-generate a script |
+| `/dcc list` | Show DCC transfers |
+| `/xdcc <bot> <pack#>` | Request XDCC pack |
+| `/emoji <search>` | Search emoji shortcodes |
 
 ## License
 

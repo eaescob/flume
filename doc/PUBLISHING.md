@@ -38,7 +38,7 @@ cargo build --release -p flume-tui --features python
 
 ### Setup (first time)
 
-1. Create a Homebrew tap repo: `https://github.com/emilio/homebrew-tap`
+1. Create a Homebrew tap repo: `https://github.com/FlumeIRC/homebrew-tap`
 2. Copy `packaging/homebrew/flume.rb` into the tap repo
 
 ### Publishing a new version
@@ -66,7 +66,7 @@ cargo build --release -p flume-tui --features python
 
 5. Test:
    ```sh
-   brew install emilio/tap/flume
+   brew install FlumeIRC/tap/flume
    ```
 
 ## Arch Linux (AUR)

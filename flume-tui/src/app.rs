@@ -968,19 +968,19 @@ impl App {
                     }
                     Command::Quit { message: quit_msg } => {
                         let nick = message.prefix_nick().unwrap_or("???");
-                        // Remove nick from all channel buffers
-                        let buffer_names: Vec<String> = ss
-                            .buffers
-                            .keys()
-                            .filter(|k| k.starts_with('#'))
-                            .cloned()
-                            .collect();
-                        for buf_name in &buffer_names {
+                        // Find channels where this nick was present, remove them, and notify
+                        let mut channels_with_nick: Vec<String> = Vec::new();
+                        for (buf_name, buf) in &ss.buffers {
+                            if buf_name.starts_with('#') && buf.nicks.iter().any(|cn| cn.nick == nick) {
+                                channels_with_nick.push(buf_name.clone());
+                            }
+                        }
+                        for buf_name in &channels_with_nick {
                             if let Some(buf) = ss.buffers.get_mut(buf_name.as_str()) {
                                 buf.remove_nick(nick);
                             }
                         }
-                        if self.show_join_part {
+                        if self.show_join_part && !channels_with_nick.is_empty() {
                             let text = match quit_msg {
                                 Some(m) => format!("{} quit ({})", nick, m),
                                 None => format!("{} quit", nick),
@@ -991,7 +991,7 @@ impl App {
                                 text,
                                 highlight: false,
                             };
-                            for buf_name in &buffer_names {
+                            for buf_name in &channels_with_nick {
                                 ss.add_message(buf_name, msg.clone(), scrollback);
                             }
                         }

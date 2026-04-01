@@ -2,7 +2,7 @@ PORTNAME=	flume
 DISTVERSION=	1.1.0
 CATEGORIES=	irc
 
-MAINTAINER=	support@flumeirc.io
+MAINTAINER=	emilio@flumeirc.io
 COMMENT=	Modern terminal IRC client with scripting and LLM support
 WWW=		https://github.com/FlumeIRC/flume
 

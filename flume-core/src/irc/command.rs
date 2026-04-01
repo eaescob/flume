@@ -345,6 +345,22 @@ impl ParsedMessage {
     pub fn prefix_nick(&self) -> Option<&str> {
         self.prefix.as_ref().and_then(|p| p.nick())
     }
+
+    /// Extract user@host from the prefix, if available.
+    pub fn prefix_userhost(&self) -> Option<String> {
+        match self.prefix.as_ref()? {
+            crate::irc::message::OwnedPrefix::User { user, host, .. } => {
+                let u = user.as_deref().unwrap_or("~");
+                let h = host.as_deref().unwrap_or("");
+                if h.is_empty() {
+                    None
+                } else {
+                    Some(format!("{}@{}", u, h))
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -80,6 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flume_config.notifications.clone(),
         flume_config.general.url_open_command.clone(),
         flume_config.ui.keybindings.mode,
+        flume_config.ui.show_join_part,
+        flume_config.ui.show_hostmask_on_join,
     );
     app.irc_config = irc_config;
 

@@ -92,6 +92,12 @@ pub struct UiConfig {
     pub tick_rate_fps: u32,
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+    /// Show join/part/quit messages in channels. Default true.
+    #[serde(default = "default_true")]
+    pub show_join_part: bool,
+    /// Show user@host in join messages. Default true.
+    #[serde(default = "default_true")]
+    pub show_hostmask_on_join: bool,
 }
 
 impl Default for UiConfig {
@@ -106,6 +112,8 @@ impl Default for UiConfig {
             input_history_size: default_input_history_size(),
             tick_rate_fps: default_tick_rate(),
             keybindings: KeybindingsConfig::default(),
+            show_join_part: true,
+            show_hostmask_on_join: true,
         }
     }
 }

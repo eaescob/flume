@@ -322,6 +322,10 @@ pub struct App {
     pub notification_config: NotificationConfig,
     /// Command to open URLs (e.g., "open" on macOS).
     pub url_open_command: String,
+    /// Show join/part/quit messages.
+    pub show_join_part: bool,
+    /// Show user@host in join messages.
+    pub show_hostmask_on_join: bool,
     /// Active keybinding mode.
     pub keybinding_mode: KeybindingMode,
     /// Vi sub-mode (Normal/Insert). Only used when keybinding_mode == Vi.
@@ -367,6 +371,8 @@ impl App {
         notification_config: NotificationConfig,
         url_open_command: String,
         keybinding_mode: KeybindingMode,
+        show_join_part: bool,
+        show_hostmask_on_join: bool,
     ) -> Self {
         App {
             servers: HashMap::new(),
@@ -387,6 +393,8 @@ impl App {
             tab_state: None,
             notification_config,
             url_open_command,
+            show_join_part,
+            show_hostmask_on_join,
             keybinding_mode,
             vi_mode: ViMode::Insert,
             vi_pending_op: None,
@@ -854,6 +862,7 @@ impl App {
                     }
                     Command::Join { channels } => {
                         let nick = message.prefix_nick().unwrap_or("???");
+                        let userhost = message.prefix_userhost();
                         if let Some((channel, _)) = channels.first() {
                             if nick == our_nick {
                                 ss.ensure_buffer(channel);
@@ -873,16 +882,24 @@ impl App {
                                 if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
                                     buf.add_nick("", nick);
                                 }
-                                ss.add_message(
-                                    channel,
-                                    DisplayMessage {
-                                        timestamp,
-                                        source: MessageSource::System,
-                                        text: format!("{} joined {}", nick, channel),
-                                        highlight: false,
-                                    },
-                                    scrollback,
-                                );
+                                if self.show_join_part {
+                                    let text = if self.show_hostmask_on_join {
+                                        let uh = userhost.as_deref().unwrap_or("");
+                                        format!("{} ({}) joined {}", nick, uh, channel)
+                                    } else {
+                                        format!("{} joined {}", nick, channel)
+                                    };
+                                    ss.add_message(
+                                        channel,
+                                        DisplayMessage {
+                                            timestamp,
+                                            source: MessageSource::System,
+                                            text,
+                                            highlight: false,
+                                        },
+                                        scrollback,
+                                    );
+                                }
                             }
                         }
                     }
@@ -890,25 +907,25 @@ impl App {
                         let nick = message.prefix_nick().unwrap_or("???");
                         let is_self = nick == ss.nick;
                         for channel in channels {
-                            // Remove nick from channel
                             if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
                                 buf.remove_nick(nick);
                             }
-                            let text = match part_msg {
-                                Some(m) => format!("{} left {} ({})", nick, channel, m),
-                                None => format!("{} left {}", nick, channel),
-                            };
-                            ss.add_message(
-                                channel,
-                                DisplayMessage {
-                                    timestamp,
-                                    source: MessageSource::System,
-                                    text,
-                                    highlight: false,
-                                },
-                                scrollback,
-                            );
-                            // Auto-close buffer when we part
+                            if self.show_join_part || is_self {
+                                let text = match part_msg {
+                                    Some(m) => format!("{} left {} ({})", nick, channel, m),
+                                    None => format!("{} left {}", nick, channel),
+                                };
+                                ss.add_message(
+                                    channel,
+                                    DisplayMessage {
+                                        timestamp,
+                                        source: MessageSource::System,
+                                        text,
+                                        highlight: false,
+                                    },
+                                    scrollback,
+                                );
+                            }
                             if is_self {
                                 ss.remove_buffer(channel);
                             }
@@ -916,17 +933,7 @@ impl App {
                     }
                     Command::Quit { message: quit_msg } => {
                         let nick = message.prefix_nick().unwrap_or("???");
-                        let text = match quit_msg {
-                            Some(m) => format!("{} quit ({})", nick, m),
-                            None => format!("{} quit", nick),
-                        };
-                        let msg = DisplayMessage {
-                            timestamp,
-                            source: MessageSource::System,
-                            text,
-                            highlight: false,
-                        };
-                        // Remove nick from all channel buffers and post quit message
+                        // Remove nick from all channel buffers
                         let buffer_names: Vec<String> = ss
                             .buffers
                             .keys()
@@ -937,7 +944,21 @@ impl App {
                             if let Some(buf) = ss.buffers.get_mut(buf_name.as_str()) {
                                 buf.remove_nick(nick);
                             }
-                            ss.add_message(buf_name, msg.clone(), scrollback);
+                        }
+                        if self.show_join_part {
+                            let text = match quit_msg {
+                                Some(m) => format!("{} quit ({})", nick, m),
+                                None => format!("{} quit", nick),
+                            };
+                            let msg = DisplayMessage {
+                                timestamp,
+                                source: MessageSource::System,
+                                text,
+                                highlight: false,
+                            };
+                            for buf_name in &buffer_names {
+                                ss.add_message(buf_name, msg.clone(), scrollback);
+                            }
                         }
                     }
                     Command::Nick { nickname } => {

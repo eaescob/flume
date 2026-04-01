@@ -2,6 +2,7 @@ pub mod irc;
 pub mod config;
 pub mod connection;
 pub mod dcc;
+pub mod emoji;
 pub mod event;
 pub mod llm;
 pub mod logging;

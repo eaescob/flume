@@ -458,6 +458,40 @@ fn handle_tab_completion(app: &mut App) {
             return;
         }
 
+        // Check if completing an emoji shortcode (:prefix)
+        if prefix.starts_with(':') && prefix.len() > 1 {
+            let emoji_prefix = &prefix[1..]; // strip leading ':'
+            let emoji_matches: Vec<String> = flume_core::emoji::complete_shortcode(emoji_prefix)
+                .into_iter()
+                .map(|(code, emoji)| format!(":{}:{}", code, emoji))
+                .collect();
+
+            if !emoji_matches.is_empty() {
+                // Show first match: replace with the emoji directly
+                let first = &emoji_matches[0];
+                // Extract just the emoji (after the last ':' + space)
+                let emoji_char = first.rsplit(':').next().unwrap_or("");
+                app.input.truncate(word_start);
+                app.input.push_str(emoji_char);
+                app.input.push(' ');
+                app.cursor_pos = app.input.len();
+
+                // Store full codes for cycling
+                let display_matches: Vec<String> = flume_core::emoji::complete_shortcode(emoji_prefix)
+                    .into_iter()
+                    .map(|(_, emoji)| emoji.to_string())
+                    .collect();
+
+                app.tab_state = Some(TabCompletionState {
+                    prefix,
+                    word_start,
+                    matches: display_matches,
+                    index: 0,
+                });
+                return;
+            }
+        }
+
         // Get nicks from active channel buffer
         let prefix_lower = prefix.to_lowercase();
         let nicks: Vec<String> = app
@@ -1135,6 +1169,29 @@ async fn process_input(
                 // Delegate to main loop which owns the ScriptManager
                 app.script_command = Some(args.to_string());
             }
+            "emoji" => {
+                if args.is_empty() {
+                    app.system_message(&format!(
+                        "Emoji shortcodes: {} available. Type :name: to use, or :prefix then Tab to complete.",
+                        flume_core::emoji::shortcode_count()
+                    ));
+                    app.system_message("Examples: :thumbsup: :wave: :fire: :heart: :rocket: :100:");
+                    app.system_message("Search: /emoji <term>");
+                } else {
+                    let matches = flume_core::emoji::complete_shortcode(args);
+                    if matches.is_empty() {
+                        app.system_message(&format!("No emoji matching '{}'", args));
+                    } else {
+                        let lines: Vec<String> = matches.iter()
+                            .map(|(code, emoji)| format!("  {} :{}:", emoji, code))
+                            .collect();
+                        app.system_message(&format!("Emoji matching '{}':", args));
+                        for line in &lines {
+                            app.system_message(line);
+                        }
+                    }
+                }
+            }
             "generate" | "gen" => {
                 handle_generate_command(args, app);
             }
@@ -1150,6 +1207,9 @@ async fn process_input(
             }
         }
     } else {
+        // Replace emoji shortcodes before sending
+        let text = &flume_core::emoji::replace_shortcodes(text);
+
         // Send as PRIVMSG to current target
         let target = app.active_target().map(|s| s.to_string());
         if let Some(ref target) = target {

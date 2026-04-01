@@ -2,10 +2,13 @@ use std::collections::{HashMap, VecDeque};
 
 use tokio::sync::mpsc;
 
+use flume_core::config::formats::FormatsConfig;
 use flume_core::config::general::NotificationConfig;
 use flume_core::config::keybindings::KeybindingMode;
 use flume_core::config::IrcConfig;
 use flume_core::event::{ConnectionState, IrcEvent, UserCommand};
+use flume_core::format::format_string;
+use flume_core::fmt_vars;
 use flume_core::irc::command::Command;
 
 use flume_core::dcc::{DccTransfer, DccTransferState};
@@ -338,6 +341,8 @@ pub struct App {
     pub show_join_part: bool,
     /// Show user@host in join messages.
     pub show_hostmask_on_join: bool,
+    /// Configurable display format strings.
+    pub formats: FormatsConfig,
     /// Active keybinding mode.
     pub keybinding_mode: KeybindingMode,
     /// Vi sub-mode (Normal/Insert). Only used when keybinding_mode == Vi.
@@ -391,6 +396,7 @@ impl App {
         keybinding_mode: KeybindingMode,
         show_join_part: bool,
         show_hostmask_on_join: bool,
+        formats: FormatsConfig,
     ) -> Self {
         App {
             servers: HashMap::new(),
@@ -414,6 +420,7 @@ impl App {
             url_open_command,
             show_join_part,
             show_hostmask_on_join,
+            formats,
             keybinding_mode,
             vi_mode: ViMode::Insert,
             vi_pending_op: None,
@@ -925,17 +932,17 @@ impl App {
                                     scrollback,
                                 );
                             } else {
-                                // Add nick to channel's nick list
                                 if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
                                     buf.add_nick("", nick);
                                 }
                                 if self.show_join_part {
-                                    let text = if self.show_hostmask_on_join {
-                                        let uh = userhost.as_deref().unwrap_or("");
-                                        format!("{} ({}) joined {}", nick, uh, channel)
-                                    } else {
-                                        format!("{} joined {}", nick, channel)
-                                    };
+                                    let uh = userhost.as_deref().unwrap_or("");
+                                    let vars = fmt_vars!(
+                                        "nick" => nick,
+                                        "userhost" => uh,
+                                        "channel" => channel.as_str()
+                                    );
+                                    let text = format_string(&self.formats.join, &vars);
                                     ss.add_message(
                                         channel,
                                         DisplayMessage {
@@ -958,10 +965,13 @@ impl App {
                                 buf.remove_nick(nick);
                             }
                             if self.show_join_part || is_self {
-                                let text = match part_msg {
-                                    Some(m) => format!("{} left {} ({})", nick, channel, m),
-                                    None => format!("{} left {}", nick, channel),
-                                };
+                                let msg_str = part_msg.as_deref().unwrap_or("");
+                                let vars = fmt_vars!(
+                                    "nick" => nick,
+                                    "channel" => channel.as_str(),
+                                    "message" => msg_str
+                                );
+                                let text = format_string(&self.formats.part, &vars);
                                 ss.add_message(
                                     channel,
                                     DisplayMessage {
@@ -993,10 +1003,9 @@ impl App {
                             }
                         }
                         if self.show_join_part && !channels_with_nick.is_empty() {
-                            let text = match quit_msg {
-                                Some(m) => format!("{} quit ({})", nick, m),
-                                None => format!("{} quit", nick),
-                            };
+                            let msg_str = quit_msg.as_deref().unwrap_or("");
+                            let vars = fmt_vars!("nick" => nick, "message" => msg_str);
+                            let text = format_string(&self.formats.quit, &vars);
                             let msg = DisplayMessage {
                                 timestamp,
                                 source: MessageSource::System,
@@ -1029,10 +1038,15 @@ impl App {
                             }
                         }
                         if self.show_join_part && !channels_with_nick.is_empty() {
+                            let vars = fmt_vars!(
+                                "old_nick" => old_nick,
+                                "new_nick" => nickname.as_str()
+                            );
+                            let text = format_string(&self.formats.nick_change, &vars);
                             let msg = DisplayMessage {
                                 timestamp,
                                 source: MessageSource::System,
-                                text: format!("*** {} is now known as {}", old_nick, nickname),
+                                text,
                                 highlight: false,
                             };
                             for buf_name in &channels_with_nick {
@@ -1045,10 +1059,13 @@ impl App {
                         if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
                             buf.topic = topic.clone();
                         }
-                        let text = match topic {
-                            Some(t) => format!("{} set topic of {} to: {}", nick, channel, t),
-                            None => format!("{} cleared topic of {}", nick, channel),
-                        };
+                        let topic_str = topic.as_deref().unwrap_or("");
+                        let vars = fmt_vars!(
+                            "nick" => nick,
+                            "channel" => channel.as_str(),
+                            "topic" => topic_str
+                        );
+                        let text = format_string(&self.formats.topic, &vars);
                         ss.add_message(
                             channel,
                             DisplayMessage {
@@ -1066,10 +1083,14 @@ impl App {
                         if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
                             buf.remove_nick(user);
                         }
-                        let text = match reason {
-                            Some(r) => format!("{} was kicked from {} by {} ({})", user, channel, nick, r),
-                            None => format!("{} was kicked from {} by {}", user, channel, nick),
-                        };
+                        let reason_str = reason.as_deref().unwrap_or("");
+                        let vars = fmt_vars!(
+                            "nick" => nick,
+                            "target" => user.as_str(),
+                            "channel" => channel.as_str(),
+                            "reason" => reason_str
+                        );
+                        let text = format_string(&self.formats.kick, &vars);
                         ss.add_message(
                             channel,
                             DisplayMessage {
@@ -1443,10 +1464,18 @@ impl App {
                             DisplayMessage {
                                 timestamp,
                                 source: MessageSource::System,
-                                text: if param_str.is_empty() {
-                                    format!("mode/{} [{}] by {}", target, mode_str, nick)
-                                } else {
-                                    format!("mode/{} [{} {}] by {}", target, mode_str, param_str, nick)
+                                text: {
+                                    let full_modes = if param_str.is_empty() {
+                                        mode_str.to_string()
+                                    } else {
+                                        format!("{} {}", mode_str, param_str)
+                                    };
+                                    let vars = fmt_vars!(
+                                        "target" => target.as_str(),
+                                        "modes" => full_modes.as_str(),
+                                        "nick" => nick
+                                    );
+                                    format_string(&self.formats.mode, &vars)
                                 },
                                 highlight: false,
                             },
@@ -1458,13 +1487,15 @@ impl App {
                         // Server notices (from server or no nick) go to server buffer
                         // User notices go to the appropriate buffer
                         if nick.is_empty() || nick.contains('.') || *target == "*" {
-                            // Server notice (nick is server hostname or target is *)
+                            // Server notice
+                            let vars = fmt_vars!("text" => text.as_str());
+                            let formatted = format_string(&self.formats.server_notice, &vars);
                             ss.add_message(
                                 "",
                                 DisplayMessage {
                                     timestamp,
                                     source: MessageSource::Server,
-                                    text: format!("[notice] {}", text),
+                                    text: formatted,
                                     highlight: false,
                                 },
                                 scrollback,
@@ -1476,12 +1507,14 @@ impl App {
                             } else {
                                 String::new()
                             };
+                            let vars = fmt_vars!("nick" => nick, "text" => text.as_str(), "target" => target.as_str());
+                            let formatted = format_string(&self.formats.notice, &vars);
                             ss.add_message(
                                 &buffer,
                                 DisplayMessage {
                                     timestamp,
                                     source: MessageSource::Server,
-                                    text: format!("[notice] <{}> {}", nick, text),
+                                    text: formatted,
                                     highlight: false,
                                 },
                                 scrollback,

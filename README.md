@@ -243,6 +243,22 @@ Use `/help` for the full list, or `/help <command>` for details on any command.
 | `/snotice add ...` | Add server notice routing rule |
 | `/emoji <search>` | Search emoji shortcodes |
 
+## Color Combos
+
+Define reusable color shortcuts for messages:
+
+```toml
+# config.toml
+[combos]
+alert = "%B%Cred,white"
+
+[combos.rainbow]
+type = "cycle"
+colors = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink"]
+```
+
+Use inline: `%rainbow%Hello world!%O` or `%alert%WARNING:%O server down`. Manage at runtime with `/color combo add|list|remove`. A `%rainbow%` combo is built in.
+
 ## Custom Formats
 
 Every message format is configurable in `config.toml`:

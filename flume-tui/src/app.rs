@@ -308,6 +308,18 @@ impl ServerState {
         }
     }
 
+    /// Return buffer names sorted the same way they display in the sidebar:
+    /// server buffer first, then alphabetical (case-insensitive).
+    pub fn sorted_buffers(&self) -> Vec<String> {
+        let mut sorted: Vec<String> = self.buffer_order.clone();
+        sorted.sort_by(|a, b| {
+            if a.is_empty() { return std::cmp::Ordering::Less; }
+            if b.is_empty() { return std::cmp::Ordering::Greater; }
+            a.to_lowercase().cmp(&b.to_lowercase())
+        });
+        sorted
+    }
+
     /// Cycle to next/previous buffer.
     pub fn cycle_buffer(&mut self, forward: bool) {
         if self.buffer_order.len() <= 1 {

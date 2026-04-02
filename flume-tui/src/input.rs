@@ -211,7 +211,8 @@ async fn execute_action(
         InputAction::BufferJump(n) => {
             let idx = (n as usize) - 1;
             if let Some(ss) = app.active_server_state_mut() {
-                if let Some(name) = ss.buffer_order.get(idx).cloned() {
+                let sorted = ss.sorted_buffers();
+                if let Some(name) = sorted.get(idx).cloned() {
                     ss.switch_buffer(&name);
                 }
             }
@@ -1044,12 +1045,7 @@ async fn process_input(
                     if num == 0 {
                         app.system_message("Window numbers start at 1");
                     } else if let Some(ss) = app.active_server_state_mut() {
-                        let mut sorted: Vec<String> = ss.buffer_order.clone();
-                        sorted.sort_by(|a, b| {
-                            if a.is_empty() { return std::cmp::Ordering::Less; }
-                            if b.is_empty() { return std::cmp::Ordering::Greater; }
-                            a.to_lowercase().cmp(&b.to_lowercase())
-                        });
+                        let sorted = ss.sorted_buffers();
                         let idx = num - 1;
                         if let Some(name) = sorted.get(idx).cloned() {
                             ss.switch_buffer(&name);

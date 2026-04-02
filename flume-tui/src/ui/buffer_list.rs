@@ -40,17 +40,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     )));
 
     // Buffer list — sorted alphabetically, server buffer first
-    let mut sorted_buffers: Vec<&String> = ss.buffer_order.iter().collect();
-    sorted_buffers.sort_by(|a, b| {
-        // Empty string (server buffer) sorts first
-        if a.is_empty() {
-            return std::cmp::Ordering::Less;
-        }
-        if b.is_empty() {
-            return std::cmp::Ordering::Greater;
-        }
-        a.to_lowercase().cmp(&b.to_lowercase())
-    });
+    let sorted_buffers = ss.sorted_buffers();
 
     for (visual_idx, buf_name) in sorted_buffers.iter().enumerate() {
         let idx = visual_idx + 1; // 1-indexed display number
@@ -59,7 +49,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         } else {
             buf_name.as_str()
         };
-        let is_active = **buf_name == ss.active_buffer;
+        let is_active = *buf_name == ss.active_buffer;
         let buf = ss.buffers.get(buf_name.as_str());
         let unread = buf.map(|b| b.unread_count).unwrap_or(0);
         let highlights = buf.map(|b| b.highlight_count).unwrap_or(0);

@@ -52,18 +52,17 @@ yay -S flume
 
 ### Debian / Ubuntu
 
-Download the `.deb` from the [Releases](https://github.com/FlumeIRC/flume/releases) page:
-
 ```sh
-sudo dpkg -i flume_1.2.2_amd64.deb
+curl -fsSL https://pkg.flumeirc.io/gpg/flume-signing-key.asc | sudo gpg --dearmor -o /usr/share/keyrings/flume.gpg
+echo "deb [signed-by=/usr/share/keyrings/flume.gpg] https://pkg.flumeirc.io/apt stable main" | sudo tee /etc/apt/sources.list.d/flume.list
+sudo apt update && sudo apt install flume
 ```
 
-### Fedora / RHEL
-
-Build from the RPM spec:
+### Fedora / RHEL / CentOS
 
 ```sh
-rpmbuild -ba packaging/rpm/flume.spec
+sudo dnf config-manager --add-repo https://pkg.flumeirc.io/rpm/flume.repo
+sudo dnf install flume
 ```
 
 ### FreeBSD

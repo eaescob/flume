@@ -143,3 +143,11 @@ jobs:
     secrets:
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
       PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+
+  publish-homebrew:
+    needs: [release]
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      version: ${{ github.ref_name }}
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

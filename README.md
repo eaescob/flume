@@ -1,5 +1,9 @@
 # Flume
 
+[![Release](https://github.com/FlumeIRC/flume/actions/workflows/release.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/release.yml)
+[![Publish Packages](https://github.com/FlumeIRC/flume/actions/workflows/publish-packages.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/publish-packages.yml)
+[![Publish Homebrew](https://github.com/FlumeIRC/flume/actions/workflows/homebrew.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/homebrew.yml)
+
 A modern, fast, terminal-based IRC client built in Rust.
 
 Flume supports multi-server connections, a rich TUI with theming and split views, vi/emacs keybinding modes, a dual scripting engine (Lua and Python), LLM-powered script and theme generation, DCC file transfers, XDCC, and emoji shortcodes.

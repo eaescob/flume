@@ -1,8 +1,19 @@
 name: Publish Homebrew
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.2.3)'
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
 
 jobs:
   update-tap:
@@ -12,12 +23,16 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          TAG="${{ inputs.version || github.ref_name }}"
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Calculate source tarball SHA256
         id: sha
         run: |
-          curl -sL "https://github.com/FlumeIRC/flume/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz" -o source.tar.gz
+          TAG="${{ steps.version.outputs.tag }}"
+          curl -sL "https://github.com/FlumeIRC/flume/archive/refs/tags/${TAG}.tar.gz" -o source.tar.gz
           SHA=$(shasum -a 256 source.tar.gz | awk '{print $1}')
           echo "sha256=${SHA}" >> $GITHUB_OUTPUT
 
@@ -28,7 +43,7 @@ jobs:
           script: |
             const version = '${{ steps.version.outputs.version }}';
             const sha = '${{ steps.sha.outputs.sha256 }}';
-            const tag = '${{ github.ref_name }}';
+            const tag = '${{ steps.version.outputs.tag }}';
 
             // Read the formula template from this repo
             const fs = require('fs');

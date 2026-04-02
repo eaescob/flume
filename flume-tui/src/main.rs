@@ -408,7 +408,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         _ => {}
                     }
                 }
-            }
+
+                // Drain remaining queued events without blocking.
+                // Prevents TUI from falling behind during bursts (ZNC playback, floods).
+                while let Ok(event) = event_collector_rx.try_recv() {
+                // Inline: extract server name and process
+                let server_name = match &event {
+                    IrcEvent::Connected { server_name, .. }
+                    | IrcEvent::Disconnected { server_name, .. }
+                    | IrcEvent::MessageReceived { server_name, .. }
+                    | IrcEvent::StateChanged { server_name, .. }
+                    | IrcEvent::Error { server_name, .. } => server_name.clone(),
+                };
+                if let Some(ref mgr) = script_manager {
+                    let script_event = irc_event_to_script_event(&event);
+                    if let Some(se) = script_event {
+                        let result = mgr.dispatch_event(se);
+                        if result.cancelled {
+                            process_script_actions(mgr, &mut app);
+                            continue;
+                        }
+                    }
+                }
+                // Check for DCC offers
+                if let IrcEvent::MessageReceived { ref server_name, ref message } = event {
+                    if let Command::Privmsg { ref text, .. } = message.command {
+                        if text.starts_with('\x01') && text.ends_with('\x01') {
+                            let inner = &text[1..text.len()-1];
+                            if inner.starts_with("DCC ") {
+                                let nick = message.prefix_nick().unwrap_or("");
+                                if let Some(dcc_msg) = dcc::parse_dcc_ctcp(&inner[4..], nick, server_name) {
+                                    if let dcc::DccCtcpMessage::Offer(offer) = dcc_msg {
+                                        let kind = match offer.dcc_type {
+                                            dcc::DccType::Send => "SEND",
+                                            dcc::DccType::Chat => "CHAT",
+                                        };
+                                        let name = offer.filename.as_deref().unwrap_or("(chat)");
+                                        let id = offer.id;
+                                        app.system_message(&format!(
+                                            "DCC {} offer from {} — {}  [/dcc accept {}]",
+                                            kind, nick, name, id
+                                        ));
+                                        app.dcc_transfers.push(DccTransfer::from_offer(offer));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let notifications = app.handle_irc_event(&event);
+                if let Some(ref mgr) = script_manager {
+                    process_script_actions(mgr, &mut app);
+                }
+                for notif in &notifications {
+                    if flume_config.notifications.highlight_bell {
+                        print!("\x07");
+                    }
+                    match notif {
+                        app::NotificationEvent::Highlight { nick, text, .. } => {
+                            if flume_config.notifications.notify_highlight {
+                                send_desktop_notification(&format!("Highlight from {}", nick), text);
+                            }
+                        }
+                        app::NotificationEvent::PrivateMessage { nick, text, .. } => {
+                            if flume_config.notifications.notify_private {
+                                send_desktop_notification(&format!("PM from {}", nick), text);
+                            }
+                        }
+                    }
+                }
+                } // end drain loop
+            } // end IRC event branch
 
             // Terminal input
             Some(event) = term_rx.recv() => {

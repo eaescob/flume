@@ -8,6 +8,7 @@ Source0:        https://github.com/FlumeIRC/flume/archive/v%{version}.tar.gz
 
 BuildRequires:  rust >= 1.75
 BuildRequires:  cargo
+BuildRequires:  python3-devel
 
 %description
 Flume is a fast, modern, terminal-based IRC client built in Rust.
@@ -20,7 +21,9 @@ XDCC, emoji shortcodes, and configurable display formats.
 %autosetup -n flume-%{version}
 
 %build
-cargo build --release -p flume-tui
+FEATURES=""
+python3 -c "import sysconfig" 2>/dev/null && FEATURES="--features python" && export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+cargo build --release -p flume-tui $FEATURES
 
 %install
 install -Dm755 target/release/flume %{buildroot}%{_bindir}/flume

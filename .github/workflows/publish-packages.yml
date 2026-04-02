@@ -23,9 +23,14 @@ jobs:
           echo "GPG key imported"
           gpg --list-keys packages@flumeirc.io
 
-      # Build the binary
+      # Build the binary with Python support
+      - name: Install Python dev headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev
+
       - name: Build
-        run: cargo build --release -p flume-tui
+        run: PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo build --release -p flume-tui --features python
 
       # ── Build and sign .deb ──
       - name: Build .deb

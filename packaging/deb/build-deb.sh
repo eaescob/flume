@@ -13,8 +13,16 @@ PKG="flume_${VERSION}_${ARCH}"
 
 echo "Building flume v${VERSION} .deb package..."
 
+# Detect Python and enable feature if available
+FEATURES=""
+if python3 -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null; then
+  echo "Python detected, enabling python feature"
+  FEATURES="--features python"
+  export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+fi
+
 # Build the binary
-cargo build --release -p flume-tui
+cargo build --release -p flume-tui $FEATURES
 
 # Create package structure
 rm -rf "target/${PKG}"

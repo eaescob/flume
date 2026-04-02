@@ -6,9 +6,18 @@ class Flume < Formula
   license "Apache-2.0"
 
   depends_on "rust" => :build
+  depends_on "python@3" => :recommended
 
   def install
-    system "cargo", "install", *std_cargo_args(path: "flume-tui")
+    features = []
+    features << "python" if build.with?("python@3")
+
+    args = std_cargo_args(path: "flume-tui")
+    args += ["--features", features.join(",")] unless features.empty?
+
+    ENV["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1" if build.with?("python@3")
+
+    system "cargo", "install", *args
     bin.install "target/release/flume"
     man1.install "doc/flume.1"
   end

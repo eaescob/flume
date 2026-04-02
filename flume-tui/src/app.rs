@@ -240,20 +240,45 @@ impl ServerState {
     }
 
     /// Ensure a buffer exists, creating it if needed.
+    /// Get a buffer by name (case-insensitive for channels).
+    pub fn get_buffer(&self, name: &str) -> Option<&Buffer> {
+        let key = Self::normalize_buffer_name(name);
+        self.buffers.get(&key)
+    }
+
+    /// Get a mutable buffer by name (case-insensitive for channels).
+    pub fn get_buffer_mut(&mut self, name: &str) -> Option<&mut Buffer> {
+        let key = Self::normalize_buffer_name(name);
+        self.buffers.get_mut(&key)
+    }
+
+    /// Normalize a buffer name. IRC channels are case-insensitive,
+    /// so we lowercase channel names to avoid duplicate buffers
+    /// (e.g., #Rust vs #rust vs #RUST from bouncers).
+    fn normalize_buffer_name(name: &str) -> String {
+        if name.starts_with('#') || name.starts_with('&') {
+            name.to_lowercase()
+        } else {
+            name.to_string()
+        }
+    }
+
     pub fn ensure_buffer(&mut self, name: &str) {
-        if !self.buffers.contains_key(name) {
-            self.buffers.insert(name.to_string(), Buffer::new());
-            self.buffer_order.push(name.to_string());
+        let key = Self::normalize_buffer_name(name);
+        if !self.buffers.contains_key(&key) {
+            self.buffers.insert(key.clone(), Buffer::new());
+            self.buffer_order.push(key);
         }
     }
 
     /// Add a message to a specific buffer. Creates the buffer if needed.
     /// Increments unread count if the buffer is not the active one.
     pub fn add_message(&mut self, buffer_name: &str, msg: DisplayMessage, scrollback_limit: usize) {
-        self.ensure_buffer(buffer_name);
-        let is_active = self.active_buffer == buffer_name;
+        let key = Self::normalize_buffer_name(buffer_name);
+        self.ensure_buffer(&key);
+        let is_active = self.active_buffer == key;
         let is_highlight = msg.highlight;
-        let buf = self.buffers.get_mut(buffer_name).unwrap();
+        let buf = self.buffers.get_mut(&key).unwrap();
         buf.messages.push_back(msg);
         while buf.messages.len() > scrollback_limit {
             buf.messages.pop_front();
@@ -268,9 +293,10 @@ impl ServerState {
 
     /// Switch to a buffer by name.
     pub fn switch_buffer(&mut self, name: &str) {
-        if self.buffers.contains_key(name) {
-            self.active_buffer = name.to_string();
-            if let Some(buf) = self.buffers.get_mut(name) {
+        let key = Self::normalize_buffer_name(name);
+        if self.buffers.contains_key(&key) {
+            self.active_buffer = key.clone();
+            if let Some(buf) = self.buffers.get_mut(&key) {
                 buf.unread_count = 0;
                 buf.highlight_count = 0;
                 buf.scroll_offset = 0;
@@ -299,11 +325,11 @@ impl ServerState {
 
     /// Remove a buffer and switch to an adjacent one.
     pub fn remove_buffer(&mut self, name: &str) {
-        if let Some(pos) = self.buffer_order.iter().position(|b| b == name) {
-            self.buffers.remove(name);
+        let key = Self::normalize_buffer_name(name);
+        if let Some(pos) = self.buffer_order.iter().position(|b| *b == key) {
+            self.buffers.remove(&key);
             self.buffer_order.remove(pos);
-            // If we were viewing this buffer, switch to another
-            if self.active_buffer == name {
+            if self.active_buffer == key {
                 let new_idx = if pos > 0 { pos - 1 } else { 0 };
                 if let Some(new_name) = self.buffer_order.get(new_idx).cloned() {
                     self.switch_buffer(&new_name);
@@ -598,7 +624,8 @@ impl App {
     ) {
         // Verify the server and buffer exist
         if let Some(ss) = self.servers.get(&server) {
-            if ss.buffers.contains_key(&buffer) {
+            let buffer_key = ServerState::normalize_buffer_name(&buffer);
+            if ss.buffers.contains_key(&buffer_key) {
                 self.split = Some(SplitState::new(direction, server, buffer));
             }
         }
@@ -965,7 +992,7 @@ impl App {
                                     scrollback,
                                 );
                             } else {
-                                if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
+                                if let Some(buf) = ss.get_buffer_mut(channel) {
                                     buf.add_nick("", nick);
                                 }
                                 if self.show_join_part {
@@ -994,7 +1021,7 @@ impl App {
                         let nick = message.prefix_nick().unwrap_or("???");
                         let is_self = nick == ss.nick;
                         for channel in channels {
-                            if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
+                            if let Some(buf) = ss.get_buffer_mut(channel) {
                                 buf.remove_nick(nick);
                             }
                             if self.show_join_part || is_self {
@@ -1031,7 +1058,7 @@ impl App {
                             }
                         }
                         for buf_name in &channels_with_nick {
-                            if let Some(buf) = ss.buffers.get_mut(buf_name.as_str()) {
+                            if let Some(buf) = ss.get_buffer_mut(buf_name) {
                                 buf.remove_nick(nick);
                             }
                         }
@@ -1066,7 +1093,7 @@ impl App {
                             .collect();
                         // Rename and notify only in those channels
                         for buf_name in &channels_with_nick {
-                            if let Some(buf) = ss.buffers.get_mut(buf_name.as_str()) {
+                            if let Some(buf) = ss.get_buffer_mut(buf_name) {
                                 buf.rename_nick(old_nick, nickname);
                             }
                         }
@@ -1089,7 +1116,7 @@ impl App {
                     }
                     Command::Topic { channel, topic } => {
                         let nick = message.prefix_nick().unwrap_or("???");
-                        if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
+                        if let Some(buf) = ss.get_buffer_mut(channel) {
                             buf.topic = topic.clone();
                         }
                         let topic_str = topic.as_deref().unwrap_or("");
@@ -1113,7 +1140,7 @@ impl App {
                     Command::Kick { channel, user, reason } => {
                         let nick = message.prefix_nick().unwrap_or("???");
                         // Remove kicked user from nick list
-                        if let Some(buf) = ss.buffers.get_mut(channel.as_str()) {
+                        if let Some(buf) = ss.get_buffer_mut(channel) {
                             buf.remove_nick(user);
                         }
                         let reason_str = reason.as_deref().unwrap_or("");

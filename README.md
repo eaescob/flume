@@ -3,6 +3,7 @@
 [![Release](https://github.com/FlumeIRC/flume/actions/workflows/release.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/release.yml)
 [![Publish Packages](https://github.com/FlumeIRC/flume/actions/workflows/publish-packages.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/publish-packages.yml)
 [![Publish Homebrew](https://github.com/FlumeIRC/flume/actions/workflows/homebrew.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/homebrew.yml)
+[![Publish AUR](https://github.com/FlumeIRC/flume/actions/workflows/aur.yml/badge.svg)](https://github.com/FlumeIRC/flume/actions/workflows/aur.yml)
 
 A modern, fast, terminal-based IRC client built in Rust.
 

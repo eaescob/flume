@@ -151,3 +151,11 @@ jobs:
       version: ${{ github.ref_name }}
     secrets:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  publish-aur:
+    needs: [release]
+    uses: ./.github/workflows/aur.yml
+    with:
+      version: ${{ github.ref_name }}
+    secrets:
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}

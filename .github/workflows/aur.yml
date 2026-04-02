@@ -1,0 +1,100 @@
+name: Publish AUR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.2.3)'
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      AUR_SSH_KEY:
+        required: true
+
+jobs:
+  update-aur:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          TAG="${{ inputs.version || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Calculate source SHA256
+        id: sha
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          curl -sL "https://github.com/FlumeIRC/flume/archive/refs/tags/${TAG}.tar.gz" -o source.tar.gz
+          SHA=$(sha256sum source.tar.gz | awk '{print $1}')
+          echo "sha256=${SHA}" >> $GITHUB_OUTPUT
+
+      - name: Update PKGBUILD
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+
+          # Update version and SHA in PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" packaging/aur/PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${SHA}')/" packaging/aur/PKGBUILD
+
+      - name: Generate .SRCINFO
+        uses: docker://archlinux:latest
+        with:
+          entrypoint: bash
+          args: |
+            -c "
+            pacman -Sy --noconfirm pacman-contrib sudo
+            useradd -m builder
+            cp packaging/aur/PKGBUILD /tmp/PKGBUILD
+            cd /tmp
+            chown builder PKGBUILD
+            sudo -u builder makepkg --printsrcinfo > .SRCINFO
+            cp .SRCINFO $GITHUB_WORKSPACE/packaging/aur/.SRCINFO
+            "
+
+      - name: Push to AUR
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Set up SSH for AUR
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+
+          # Clone AUR package repo
+          git clone ssh://aur@aur.archlinux.org/flume.git /tmp/aur-flume || {
+            # First time: init the repo
+            mkdir -p /tmp/aur-flume
+            cd /tmp/aur-flume
+            git init
+            git remote add origin ssh://aur@aur.archlinux.org/flume.git
+          }
+
+          # Copy updated files
+          cp packaging/aur/PKGBUILD /tmp/aur-flume/
+          cp packaging/aur/.SRCINFO /tmp/aur-flume/
+
+          # Commit and push
+          cd /tmp/aur-flume
+          git config user.name "Emilio Escobar"
+          git config user.email "emilio@flumeirc.io"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet || {
+            git commit -m "Update to ${VERSION}"
+            git push origin master
+          }

@@ -1,0 +1,202 @@
+name: Publish Packages
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Import GPG key for signing
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "GPG key imported"
+          gpg --list-keys packages@flumeirc.io
+
+      # Build the binary
+      - name: Build
+        run: cargo build --release -p flume-tui
+
+      # ── Build and sign .deb ──
+      - name: Build .deb
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PKG="flume_${VERSION}_amd64"
+
+          mkdir -p "target/${PKG}/DEBIAN"
+          mkdir -p "target/${PKG}/usr/bin"
+          mkdir -p "target/${PKG}/usr/share/man/man1"
+          mkdir -p "target/${PKG}/usr/share/doc/flume"
+
+          cp target/release/flume "target/${PKG}/usr/bin/"
+          cp doc/flume.1 "target/${PKG}/usr/share/man/man1/"
+          gzip -9 "target/${PKG}/usr/share/man/man1/flume.1"
+          cp LICENSE "target/${PKG}/usr/share/doc/flume/"
+          sed "s/^Version:.*/Version: ${VERSION}/" packaging/deb/control > "target/${PKG}/DEBIAN/control"
+          chmod 755 "target/${PKG}/usr/bin/flume"
+
+          dpkg-deb --build "target/${PKG}"
+          echo "Built target/${PKG}.deb"
+
+      # ── Build and sign RPM ──
+      - name: Build .rpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+          VERSION=${{ steps.version.outputs.version }}
+
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          git archive --format=tar.gz --prefix="flume-${VERSION}/" HEAD > ~/rpmbuild/SOURCES/v${VERSION}.tar.gz
+          cp packaging/rpm/flume.spec ~/rpmbuild/SPECS/
+          rpmbuild -bb ~/rpmbuild/SPECS/flume.spec || echo "RPM build requires cargo in rpmbuild - using pre-built binary"
+
+          # Alternative: create RPM from pre-built binary using fpm if rpmbuild cargo fails
+          if ! ls ~/rpmbuild/RPMS/x86_64/*.rpm 2>/dev/null; then
+            sudo gem install fpm 2>/dev/null || sudo apt-get install -y ruby-dev && sudo gem install fpm
+            fpm -s dir -t rpm \
+              -n flume \
+              -v ${VERSION} \
+              --license "Apache-2.0" \
+              --url "https://github.com/FlumeIRC/flume" \
+              --description "Modern terminal IRC client" \
+              --maintainer "emilio@flumeirc.io" \
+              target/release/flume=/usr/bin/flume \
+              doc/flume.1=/usr/share/man/man1/flume.1 \
+              LICENSE=/usr/share/doc/flume/LICENSE
+          fi
+
+      # ── Clone packages repo and update ──
+      - name: Checkout packages repo
+        uses: actions/checkout@v4
+        with:
+          repository: FlumeIRC/packages
+          token: ${{ secrets.PACKAGES_TOKEN }}
+          path: packages-repo
+
+      # ── Update APT repository ──
+      - name: Update APT repo
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cd packages-repo
+          mkdir -p apt/pool/main
+          mkdir -p apt/dists/stable/main/binary-amd64
+
+          # Copy .deb
+          cp ../target/flume_${VERSION}_amd64.deb apt/pool/main/
+
+          # Generate Packages file
+          cd apt
+          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
+          gzip -9c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+
+          # Generate Release file
+          cd dists/stable
+          cat > Release <<RELEASE
+          Origin: FlumeIRC
+          Label: FlumeIRC
+          Suite: stable
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: Flume IRC client packages
+          RELEASE
+          # Fix indentation
+          sed -i 's/^          //' Release
+
+          # Sign Release file
+          gpg --batch --yes --armor --detach-sign -o Release.gpg Release
+          gpg --batch --yes --clearsign -o InRelease Release
+
+          cd ../../../
+
+      # ── Update RPM repository ──
+      - name: Update RPM repo
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cd packages-repo
+          mkdir -p rpm/packages
+
+          # Copy RPM (from rpmbuild or fpm)
+          cp ~/rpmbuild/RPMS/x86_64/*.rpm rpm/packages/ 2>/dev/null || cp *.rpm rpm/packages/ 2>/dev/null || echo "No RPM found"
+
+          # Create repo metadata (if createrepo is available)
+          if command -v createrepo_c &>/dev/null; then
+            createrepo_c rpm/
+          elif command -v createrepo &>/dev/null; then
+            createrepo rpm/
+          else
+            sudo apt-get install -y createrepo-c 2>/dev/null && createrepo_c rpm/ || echo "createrepo not available, skipping"
+          fi
+
+          # Sign repo metadata
+          if [ -f rpm/repodata/repomd.xml ]; then
+            gpg --batch --yes --armor --detach-sign -o rpm/repodata/repomd.xml.asc rpm/repodata/repomd.xml
+          fi
+
+      # ── Create index and GPG key page ──
+      - name: Create index page
+        run: |
+          cd packages-repo
+          mkdir -p gpg
+
+          # Export public key
+          gpg --armor --export packages@flumeirc.io > gpg/flume-signing-key.asc
+
+          # Create repo config for dnf/yum
+          mkdir -p rpm
+          cat > rpm/flume.repo <<'REPO'
+          [flume]
+          name=Flume IRC Client
+          baseurl=https://pkg.flumeirc.io/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkg.flumeirc.io/gpg/flume-signing-key.asc
+          REPO
+          sed -i 's/^          //' rpm/flume.repo
+
+          # Create index.html
+          cat > index.html <<'HTML'
+          <!DOCTYPE html>
+          <html>
+          <head><title>Flume Packages</title></head>
+          <body>
+          <h1>Flume IRC Client — Package Repository</h1>
+          <h2>Debian / Ubuntu</h2>
+          <pre>
+          curl -fsSL https://pkg.flumeirc.io/gpg/flume-signing-key.asc | sudo gpg --dearmor -o /usr/share/keyrings/flume.gpg
+          echo "deb [signed-by=/usr/share/keyrings/flume.gpg] https://pkg.flumeirc.io/apt stable main" | sudo tee /etc/apt/sources.list.d/flume.list
+          sudo apt update && sudo apt install flume
+          </pre>
+          <h2>Fedora / RHEL / CentOS</h2>
+          <pre>
+          sudo dnf config-manager --add-repo https://pkg.flumeirc.io/rpm/flume.repo
+          sudo dnf install flume
+          </pre>
+          <h2>GPG Key</h2>
+          <p><a href="/gpg/flume-signing-key.asc">Download signing key</a></p>
+          <p>Fingerprint: A54CE1BB2C816FED634C36799839CBB78EDBABE9</p>
+          </body>
+          </html>
+          HTML
+          sed -i 's/^          //' index.html
+
+      # ── Push to packages repo ──
+      - name: Push packages
+        run: |
+          cd packages-repo
+          git config user.name "FlumeIRC Bot"
+          git config user.email "packages@flumeirc.io"
+          git add -A
+          git commit -m "Update packages to ${{ steps.version.outputs.version }}" || echo "No changes"
+          git push

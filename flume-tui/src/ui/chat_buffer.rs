@@ -86,31 +86,35 @@ pub fn render_buffer(
     // Take up to 200 recent messages (more than any screen height, accounts for wrapping)
     let start = end.saturating_sub(200);
 
-    let lines: Vec<Line> = messages
-        .iter()
-        .skip(start)
-        .take(end - start)
-        .map(|msg| format_message(msg, timestamp_format, search, theme))
-        .collect();
-
+    let width = area.width as usize;
     let height = area.height as usize;
-    let paragraph = Paragraph::new(lines.clone())
-        .wrap(ratatui::widgets::Wrap { trim: false });
 
-    // Calculate how many visual lines the paragraph produces, then scroll
-    // to the bottom so the latest messages are visible.
-    // Approximate: count lines + extra for wrapping (assume avg 1.5x for wrapped)
-    let visual_lines: usize = lines.iter()
-        .map(|l| {
-            let width = area.width as usize;
-            if width == 0 { return 1; }
-            let line_width: usize = l.spans.iter().map(|s| s.content.len()).sum();
-            (line_width / width.max(1)) + 1
-        })
-        .sum();
-    let scroll_y = visual_lines.saturating_sub(height) as u16;
+    // Build visual lines: wrap normal text at width, keep art lines intact.
+    // Art is detected by the presence of background color codes (\x03FG,BG).
+    let mut visual_lines: Vec<Line> = Vec::new();
+    for msg in messages.iter().skip(start).take(end - start) {
+        let line = format_message(msg, timestamp_format, search, theme);
+        let is_art = has_background_colors(&msg.text);
 
-    let paragraph = paragraph.scroll((scroll_y, 0));
+        if is_art || width == 0 {
+            visual_lines.push(line);
+        } else {
+            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            if line_width <= width {
+                visual_lines.push(line);
+            } else {
+                // Soft-wrap: split into multiple visual lines
+                let wrapped = wrap_line(&line, width);
+                visual_lines.extend(wrapped);
+            }
+        }
+    }
+
+    // Show the last `height` visual lines (scroll to bottom)
+    let skip = visual_lines.len().saturating_sub(height);
+    let visible: Vec<Line> = visual_lines.into_iter().skip(skip).take(height).collect();
+
+    let paragraph = Paragraph::new(visible);
     frame.render_widget(paragraph, area);
 
     if scroll_offset > 0 {
@@ -178,6 +182,89 @@ fn styled_text_spans(
         }
     }
     spans
+}
+
+/// Check if text contains background color codes (likely ASCII art).
+fn has_background_colors(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == 0x03 {
+            i += 1;
+            // Skip FG digits
+            let start = i;
+            while i < len && i - start < 2 && bytes[i].is_ascii_digit() { i += 1; }
+            // If comma follows, there's a background color
+            if i < len && bytes[i] == b',' {
+                return true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+/// Wrap a Line into multiple visual lines at the given width.
+fn wrap_line<'a>(line: &Line<'a>, width: usize) -> Vec<Line<'a>> {
+    if width == 0 {
+        return vec![line.clone()];
+    }
+
+    // Flatten all spans into one string, tracking style boundaries
+    let mut chars: Vec<(char, Style)> = Vec::new();
+    for span in &line.spans {
+        for ch in span.content.chars() {
+            chars.push((ch, span.style));
+        }
+    }
+
+    let mut result = Vec::new();
+    let mut pos = 0;
+    while pos < chars.len() {
+        let end = (pos + width).min(chars.len());
+
+        // Try to break at a space for word-wrapping
+        let mut break_at = end;
+        if end < chars.len() {
+            // Look back for a space
+            let mut j = end;
+            while j > pos + width / 2 {
+                if chars[j].0 == ' ' {
+                    break_at = j + 1;
+                    break;
+                }
+                j -= 1;
+            }
+        }
+
+        // Build spans for this visual line
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_style = if pos < chars.len() { chars[pos].1 } else { Style::default() };
+
+        for &(ch, style) in &chars[pos..break_at] {
+            if style != current_style {
+                if !current_text.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
+                }
+                current_style = style;
+            }
+            current_text.push(ch);
+        }
+        if !current_text.is_empty() {
+            spans.push(Span::styled(current_text, current_style));
+        }
+
+        result.push(Line::from(spans));
+        pos = break_at;
+    }
+
+    if result.is_empty() {
+        result.push(line.clone());
+    }
+    result
 }
 
 fn format_message<'a>(

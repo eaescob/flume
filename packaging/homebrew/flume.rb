@@ -3,7 +3,7 @@ class Flume < Formula
   homepage "https://github.com/FlumeIRC/flume"
   url "https://github.com/FlumeIRC/flume/archive/refs/tags/v1.2.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
-  license "BSD-3-Clause"
+  license "Apache-2.0"
 
   depends_on "rust" => :build
 

@@ -6,7 +6,7 @@ MAINTAINER=	emilio@flumeirc.io
 COMMENT=	Modern terminal IRC client with scripting and LLM support
 WWW=		https://github.com/FlumeIRC/flume
 
-LICENSE=	BSD3CLAUSE
+LICENSE=	APACHE20
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
 USES=		cargo

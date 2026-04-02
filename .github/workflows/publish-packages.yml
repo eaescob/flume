@@ -61,6 +61,8 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
 
+          mkdir -p target
+
           # Prepare compressed man page
           gzip -9 -k doc/flume.1
 

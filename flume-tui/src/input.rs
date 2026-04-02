@@ -2543,6 +2543,29 @@ fn handle_snotice_command(args: &str, app: &mut App) {
                 Err(e) => app.system_message(&format!("Failed to save: {}", e)),
             }
         }
+        "suppress" => {
+            // /snotice suppress <literal text> — suppress notices containing this text
+            let text = parts.get(1).copied().unwrap_or("").trim();
+            if text.is_empty() {
+                app.system_message("Usage: /snotice suppress <text to match>");
+                app.system_message("  Matches notices containing this text (literal, not regex)");
+                app.system_message("  Example: /snotice suppress popm2!bopm");
+                return;
+            }
+            let escaped = regex::escape(text);
+            if regex::Regex::new(&escaped).is_ok() {
+                let rule = flume_core::config::formats::SnoticeRuleConfig {
+                    pattern: escaped,
+                    format: None,
+                    buffer: None,
+                    suppress: true,
+                };
+                app.snotice_configs.push(rule);
+                app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
+                app.system_message(&format!("Suppressing notices containing: {}", text));
+                app.system_message("Use /snotice save to persist");
+            }
+        }
         "test" => {
             // Test snotice rules against a sample text
             let test_text = parts.get(1).copied().unwrap_or("").trim();
@@ -2575,30 +2598,68 @@ fn handle_snotice_command(args: &str, app: &mut App) {
             }
         }
         "last" => {
-            // Suppress the last raw server notice
-            let last_notice = app.last_raw_snotice.clone();
+            // Show and suppress the last server/global notice.
+            // Falls back to searching the active buffer for server messages.
+            let rest = parts.get(1).copied().unwrap_or("").trim();
+            let last_notice = app.last_raw_snotice.clone().or_else(|| {
+                app.active_messages().iter().rev()
+                    .find(|m| matches!(m.source, MessageSource::Server))
+                    .map(|m| {
+                        let t = &m.text;
+                        if let Some(r) = t.strip_prefix("[notice] ") {
+                            r.to_string()
+                        } else if let Some(pos) = t.find("] ") {
+                            t[pos + 2..].to_string()
+                        } else {
+                            t.clone()
+                        }
+                    })
+            });
             if let Some(text) = last_notice {
                 let raw = &text;
-                // Escape regex special chars for a literal match
-                let escaped = regex::escape(raw);
-                if regex::Regex::new(&escaped).is_ok() {
+                if rest.is_empty() || rest == "suppress" {
+                    let escaped = regex::escape(raw);
                     let rule = flume_core::config::formats::SnoticeRuleConfig {
-                        pattern: escaped.clone(),
+                        pattern: escaped,
                         format: None,
                         buffer: None,
                         suppress: true,
                     };
                     app.snotice_configs.push(rule);
                     app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
-                    app.system_message(&format!("Suppressed: {}", &raw[..raw.len().min(60)]));
+                    app.system_message(&format!("Suppressed: {}", &raw[..raw.len().min(80)]));
                     app.system_message("Use /snotice save to persist");
+                } else if rest.starts_with("route ") {
+                    let buf_name = rest.strip_prefix("route ").unwrap().trim();
+                    let escaped = regex::escape(raw);
+                    let rule = flume_core::config::formats::SnoticeRuleConfig {
+                        pattern: escaped,
+                        format: None,
+                        buffer: Some(buf_name.to_string()),
+                        suppress: false,
+                    };
+                    app.snotice_configs.push(rule);
+                    app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
+                    app.system_message(&format!("Routing to buffer '{}'. Use /snotice save to persist", buf_name));
+                } else if rest == "show" {
+                    app.system_message(&format!("Last notice text:"));
+                    app.system_message(raw);
+                    app.system_message("");
+                    app.system_message("  /snotice last              — suppress it");
+                    app.system_message("  /snotice last route <buf>  — route to buffer");
+                    app.system_message("  /snotice last show         — show raw text");
+                } else {
+                    app.system_message("Usage: /snotice last [suppress|route <buffer>|show]");
                 }
+                // Keep raw text for follow-up commands
+                app.last_raw_snotice = Some(text);
             } else {
-                app.system_message("No recent server notice found in this buffer");
+                app.system_message("No recent server notice found");
+                app.system_message("Try switching to the server buffer first");
             }
         }
         _ => {
-            app.system_message("Usage: /snotice add|list|remove|save|test|last");
+            app.system_message("Usage: /snotice add|suppress|list|remove|save|test|last");
         }
     }
 }

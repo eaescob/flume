@@ -584,7 +584,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match result {
                     Ok((kind, language, content, description, user_name)) => {
                         let ext = match kind {
-                            GenerationKind::Script => language.as_deref().unwrap_or("lua"),
+                            GenerationKind::Script => match language.as_deref() {
+                                Some("python") | Some("py") => "py",
+                                _ => "lua",
+                            },
                             GenerationKind::Theme => "toml",
                             GenerationKind::Layout => "toml",
                         };

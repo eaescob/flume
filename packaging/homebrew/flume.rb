@@ -15,7 +15,8 @@ class Flume < Formula
     args = std_cargo_args(path: "flume-tui")
     args += ["--features", features.join(",")] unless features.empty?
 
-    ENV["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1" if build.with?("python@3")
+    # Support newer Python versions (3.14+) via stable ABI
+    ENV["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
 
     system "cargo", "install", *args
     bin.install "target/release/flume"

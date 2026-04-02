@@ -291,7 +291,7 @@ fn default_chat_highlight() -> String { "yellow".to_string() }
 fn default_chat_url() -> String { "lightblue".to_string() }
 fn default_unread() -> String { "yellow".to_string() }
 fn default_inactive() -> String { "darkgray".to_string() }
-fn default_active() -> String { "white".to_string() }
+fn default_active() -> String { "cyan".to_string() }
 fn default_scroll_indicator() -> String { "yellow".to_string() }
 fn default_search_match() -> String { "darkgray".to_string() }
 fn default_search_match_fg() -> String { "white".to_string() }

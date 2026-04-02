@@ -1756,7 +1756,10 @@ fn show_help(app: &mut App) {
     app.system_message("    /generate layout <desc>  — Generate a layout");
     app.system_message("    /generate accept/reject  — Save or discard generation");
     app.system_message("  Other:");
-    app.system_message("    /snotice add|list|rm|save — Manage server notice rules");
+    app.system_message("    /snotice add|suppress|list|rm|save|test|last");
+    app.system_message("                             — Manage server notice rules");
+    app.system_message("    /color <name> <text>     — Send colored text");
+    app.system_message("    /colors                  — Show available colors");
     app.system_message("    /set [key] [value]       — View or change settings");
     app.system_message("    /quote <raw line>        — Send raw IRC line");
     app.system_message("    /go <name or number>     — Jump to buffer/server");
@@ -1961,7 +1964,7 @@ fn show_help_topic(topic: &str, app: &mut App) {
             app.system_message("  Matching lines are highlighted. /search with no args clears.");
         }
         "snotice" => {
-            app.system_message("/snotice add|list|remove|save");
+            app.system_message("/snotice add|suppress|list|remove|save|test|last");
             app.system_message("  Manage regex-based server notice routing rules.");
             app.system_message("");
             app.system_message("  /snotice list             — show all rules");
@@ -1969,12 +1972,38 @@ fn show_help_topic(topic: &str, app: &mut App) {
             app.system_message("    --format <fmt>          — format with ${1} ${2} capture groups");
             app.system_message("    --buffer <name>         — route to a named buffer");
             app.system_message("    --suppress              — drop the notice entirely");
+            app.system_message("  /snotice suppress <text>  — suppress notices containing literal text");
             app.system_message("  /snotice remove <number>  — remove a rule by number");
             app.system_message("  /snotice save             — save rules to snotice.toml");
+            app.system_message("  /snotice test <text>      — test rules against sample text");
+            app.system_message("  /snotice last             — show last notice, suppress/route it");
+            app.system_message("    /snotice last suppress  — suppress the last notice");
+            app.system_message("    /snotice last route <buffer> [--format <fmt>]");
+            app.system_message("                            — route last notice to a buffer");
             app.system_message("");
             app.system_message("  Example:");
             app.system_message("    /snotice add --match \"Client connecting: (\\S+)\" --format \"[connect] ${1}\" --buffer snotice-connections");
-            app.system_message("    /snotice add --match \"Oper-up\" --suppress");
+            app.system_message("    /snotice suppress Oper-up notice");
+        }
+        "color" | "colour" => {
+            app.system_message("/color <color> <text>");
+            app.system_message("  Send a message with colored text.");
+            app.system_message("");
+            app.system_message("  Color can be a name or mIRC number (0-15):");
+            app.system_message("  /color red Watch out!");
+            app.system_message("  /color 4 This is also red");
+            app.system_message("  /color lightblue Hello world");
+            app.system_message("");
+            app.system_message("  Use /colors to see all available color names.");
+            app.system_message("");
+            app.system_message("  Inline formatting shortcuts:");
+            app.system_message("  %B bold  %I italic  %U underline  %R reverse  %O reset");
+            app.system_message("  %C<color> or %C<fg>,<bg> for inline colors");
+            app.system_message("  Example: %Cred hello %O world");
+        }
+        "colors" | "colours" => {
+            app.system_message("/colors");
+            app.system_message("  Show all available color names with previews.");
         }
         "set" => {
             app.system_message("/set [section.key] [value]");

@@ -1,0 +1,14 @@
+Package: flume
+Version: 1.2.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Emilio A. Escobar <emilio@flumeirc.io>
+Homepage: https://github.com/FlumeIRC/flume
+Description: Modern terminal IRC client
+ Flume is a fast, modern, terminal-based IRC client built in Rust.
+ It supports multi-server connections, a rich TUI with theming and
+ split views, vi/emacs keybinding modes, Lua and Python scripting,
+ LLM-powered script and theme generation, DCC file transfers,
+ XDCC, emoji shortcodes, and configurable display formats.
+Depends: libc6 (>= 2.17)

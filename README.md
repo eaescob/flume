@@ -55,7 +55,7 @@ yay -S flume
 Download the `.deb` from the [Releases](https://github.com/FlumeIRC/flume/releases) page:
 
 ```sh
-sudo dpkg -i flume_1.2.0_amd64.deb
+sudo dpkg -i flume_1.2.1_amd64.deb
 ```
 
 ### Fedora / RHEL

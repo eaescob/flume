@@ -1,5 +1,5 @@
 Name:           flume
-Version:        1.2.0
+Version:        1.2.1
 Release:        1%{?dist}
 Summary:        Modern terminal IRC client
 License:        Apache-2.0
@@ -36,6 +36,15 @@ install -Dm644 LICENSE %{buildroot}%{_licensedir}/%{name}/LICENSE
 %{_mandir}/man1/flume.1*
 
 %changelog
+* Wed Apr 02 2026 Emilio A. Escobar <emilio@flumeirc.io> - 1.2.1-1
+- IRC color and formatting support (mIRC colors, 256-color, named colors)
+- /color and /colors commands for colored messages
+- /snotice suppress for literal text matching
+- /snotice last --route with --format support
+- ASCII art rendering preserved (selective line wrapping)
+- Event pipeline reliability fixes (BATCH protocol, unbounded channels)
+- ZNC bouncer compatibility improvements
+
 * Tue Apr 01 2026 Emilio A. Escobar <emilio@flumeirc.io> - 1.2.0-1
 - Configurable format strings for all display output
 - Regex-based server notice routing for IRC operators

@@ -1,6 +1,6 @@
 # Maintainer: Emilio Escobar <emilio@flumeirc.io>
 pkgname=flume
-pkgver=1.2.0
+pkgver=1.2.1
 pkgrel=1
 pkgdesc="Modern terminal IRC client with scripting and LLM support"
 arch=('x86_64' 'aarch64')

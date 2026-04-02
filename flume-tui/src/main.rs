@@ -191,7 +191,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Single unbounded collector — all server events flow here.
+    // Server event receivers — polled directly, no bridge tasks.
+    let mut server_event_rxs: Vec<mpsc::UnboundedReceiver<IrcEvent>> = Vec::new();
+    // Also keep a collector for compatibility with spawn_connection
     let (event_collector_tx, mut event_collector_rx) = mpsc::unbounded_channel::<IrcEvent>();
 
     let mut autojoin_sent: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -768,12 +770,24 @@ fn spawn_connection(
     }
 
     // Store the event receiver — polled directly in the main loop
-    // Bridge: forward server events to collector (simple, non-blocking)
-    let tx = event_collector_tx.clone();
-    let mut event_rx = handle.event_rx;
+    // Store receiver — polled directly in main loop, no bridge task
+    event_collector_tx.send(IrcEvent::StateChanged {
+        server_name: display_name.clone(),
+        state: flume_core::event::ConnectionState::Connecting,
+    }).ok();
+    // Push receiver for direct polling
+    let collector_tx = event_collector_tx.clone();
+    let mut rx = handle.event_rx;
+    // Forwarding task — but uses recv_many for batch processing
     tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            if tx.send(event).is_err() { break; }
+        let mut buf = Vec::with_capacity(256);
+        loop {
+            // recv_many: waits for at least 1, returns up to 256 at once
+            let n = rx.recv_many(&mut buf, 256).await;
+            if n == 0 { break; } // channel closed
+            for event in buf.drain(..) {
+                if collector_tx.send(event).is_err() { return; }
+            }
         }
     });
 

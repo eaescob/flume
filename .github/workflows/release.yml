@@ -134,3 +134,12 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.sha256
             artifacts/**/*.deb
+
+  publish-packages:
+    needs: [release]
+    uses: ./.github/workflows/publish-packages.yml
+    with:
+      version: ${{ github.ref_name }}
+    secrets:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}

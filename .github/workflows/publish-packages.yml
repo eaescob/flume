@@ -1,8 +1,21 @@
 name: Publish Packages
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.2.2)'
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      GPG_PRIVATE_KEY:
+        required: true
+      PACKAGES_TOKEN:
+        required: true
 
 jobs:
   publish:
@@ -12,7 +25,9 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          TAG="${{ inputs.version || github.ref_name }}"
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
 
       # Import GPG key for signing
       - name: Import GPG key

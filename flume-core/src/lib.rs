@@ -5,6 +5,7 @@ pub mod dcc;
 pub mod emoji;
 pub mod event;
 pub mod format;
+pub mod irc_format;
 pub mod llm;
 pub mod logging;
 pub mod scripting;

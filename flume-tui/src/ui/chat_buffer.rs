@@ -1,13 +1,58 @@
 use std::collections::VecDeque;
 
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+use flume_core::irc_format::{self, FormattedSpan};
+
 use crate::app::{App, DisplayMessage, MessageSource};
 use crate::theme::Theme;
+
+/// mIRC color palette (0-15) mapped to ratatui colors.
+fn irc_color(code: u8) -> Color {
+    match code {
+        0 => Color::White,
+        1 => Color::Black,
+        2 => Color::Blue,
+        3 => Color::Green,
+        4 => Color::Red,
+        5 => Color::Indexed(52),
+        6 => Color::Magenta,
+        7 => Color::Indexed(208),
+        8 => Color::Yellow,
+        9 => Color::LightGreen,
+        10 => Color::Cyan,
+        11 => Color::LightCyan,
+        12 => Color::LightBlue,
+        13 => Color::LightMagenta,
+        14 => Color::DarkGray,
+        15 => Color::Gray,
+        // Extended colors 16-98: map to terminal 256-color palette
+        16..=98 => Color::Indexed(code - 16 + 16),
+        _ => Color::Reset,
+    }
+}
+
+/// Convert an IRC FormattedSpan to a ratatui Span.
+fn irc_span_to_ratatui(span: &FormattedSpan, base_style: Style) -> Span<'static> {
+    let mut style = base_style;
+    if let Some(fg_code) = span.fg { style = style.fg(irc_color(fg_code)); }
+    if let Some(bg_code) = span.bg { style = style.bg(irc_color(bg_code)); }
+    if span.reverse {
+        let fg = style.fg.unwrap_or(Color::Reset);
+        let bg = style.bg.unwrap_or(Color::Reset);
+        style = style.fg(bg).bg(fg);
+    }
+    let mut mods = Modifier::empty();
+    if span.bold { mods |= Modifier::BOLD; }
+    if span.italic { mods |= Modifier::ITALIC; }
+    if span.underline { mods |= Modifier::UNDERLINED; }
+    style = style.add_modifier(mods);
+    Span::styled(span.text.clone(), style)
+}
 use crate::url;
 
 /// Render the active buffer's messages into the given area.
@@ -100,20 +145,29 @@ fn styled_text_spans(
     let effective_base = if is_highlight { highlight_style } else { base_style };
     let effective_url = url_style.add_modifier(Modifier::UNDERLINED);
 
-    let url_spans = url::find_urls(text);
+    // Strip IRC formatting for URL detection (URLs can span format boundaries)
+    let plain = irc_format::strip_formatting(text);
+    let url_spans = url::find_urls(&plain);
+
     if url_spans.is_empty() {
-        return vec![Span::styled(text.to_string(), effective_base)];
+        // No URLs — render with IRC formatting
+        return irc_format::parse_irc_format(text)
+            .iter()
+            .map(|s| irc_span_to_ratatui(s, effective_base))
+            .collect();
     }
 
+    // Has URLs — for simplicity, strip IRC formatting and render with URL highlighting
+    // (mixing IRC colors + URL detection is complex; this preserves URL functionality)
     let mut spans = Vec::new();
     let mut pos = 0;
     for (start, end) in &url_spans {
         if pos < *start {
-            if let Some(segment) = text.get(pos..*start) {
+            if let Some(segment) = plain.get(pos..*start) {
                 spans.push(Span::styled(segment.to_string(), effective_base));
             }
         }
-        if let Some(segment) = text.get(*start..*end) {
+        if let Some(segment) = plain.get(*start..*end) {
             spans.push(Span::styled(segment.to_string(), effective_url));
         }
         pos = *end;

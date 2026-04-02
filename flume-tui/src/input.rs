@@ -1296,8 +1296,9 @@ async fn process_input(
             }
         }
     } else {
-        // Replace emoji shortcodes before sending
+        // Replace emoji shortcodes and IRC format shortcuts before sending
         let text = &flume_core::emoji::replace_shortcodes(text);
+        let text = &flume_core::irc_format::apply_input_shortcuts(text);
 
         // Send as PRIVMSG to current target
         let target = app.active_target().map(|s| s.to_string());

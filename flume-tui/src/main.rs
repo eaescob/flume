@@ -694,20 +694,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Render tick
+            // Render tick (theme hot-reload and time-based updates)
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(last_render + tick_rate)) => {
-                // Check theme hot-reload every tick (~33ms at 30fps, mtime check is cheap)
                 theme.check_reload();
-
-                // Process any pending script actions
                 if let Some(ref mgr) = script_manager {
                     process_script_actions(mgr, &mut app);
                 }
-
-                terminal.draw(|frame| ui::render(frame, &app, &theme))?;
-                last_render = Instant::now();
             }
         }
+
+        // Render after every event — ensures display is always current
+        // when switching buffers, receiving messages, or processing input.
+        terminal.draw(|frame| ui::render(frame, &app, &theme))?;
+        last_render = Instant::now();
     }
 
     logger.flush();

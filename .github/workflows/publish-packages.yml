@@ -14,74 +14,76 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
-      - uses: dtolnay/rust-toolchain@stable
-
       # Import GPG key for signing
       - name: Import GPG key
         run: |
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
-          echo "GPG key imported"
           gpg --list-keys packages@flumeirc.io
 
-      # Build the binary with Python support
-      - name: Install Python dev headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-dev
-
-      - name: Build
-        run: PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo build --release -p flume-tui --features python
-
-      # ── Build and sign .deb ──
-      - name: Build .deb
+      # Download release binaries instead of rebuilding
+      - name: Download release assets
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          PKG="flume_${VERSION}_amd64"
+          mkdir -p binaries
 
-          mkdir -p "target/${PKG}/DEBIAN"
-          mkdir -p "target/${PKG}/usr/bin"
-          mkdir -p "target/${PKG}/usr/share/man/man1"
-          mkdir -p "target/${PKG}/usr/share/doc/flume"
+          # Download and extract Linux binaries from the release
+          gh release download "v${VERSION}" -p "flume-x86_64-unknown-linux-gnu.tar.gz" -D binaries/
+          gh release download "v${VERSION}" -p "flume-aarch64-unknown-linux-gnu.tar.gz" -D binaries/
 
-          cp target/release/flume "target/${PKG}/usr/bin/"
-          cp doc/flume.1 "target/${PKG}/usr/share/man/man1/"
-          gzip -9 "target/${PKG}/usr/share/man/man1/flume.1"
-          cp LICENSE "target/${PKG}/usr/share/doc/flume/"
-          sed "s/^Version:.*/Version: ${VERSION}/" packaging/deb/control > "target/${PKG}/DEBIAN/control"
-          chmod 755 "target/${PKG}/usr/bin/flume"
+          mkdir -p binaries/amd64 binaries/arm64
+          tar xzf binaries/flume-x86_64-unknown-linux-gnu.tar.gz -C binaries/amd64
+          tar xzf binaries/flume-aarch64-unknown-linux-gnu.tar.gz -C binaries/arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          dpkg-deb --build "target/${PKG}"
-          echo "Built target/${PKG}.deb"
-
-      # ── Build and sign RPM ──
-      - name: Build .rpm
+      # Install nfpm for building deb and rpm packages
+      - name: Install nfpm
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm
+          curl -sfL https://github.com/goreleaser/nfpm/releases/download/v2.41.1/nfpm_2.41.1_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin nfpm
 
+      # Generate nfpm config and build packages for both architectures
+      - name: Build packages
+        run: |
           VERSION=${{ steps.version.outputs.version }}
 
-          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          git archive --format=tar.gz --prefix="flume-${VERSION}/" HEAD > ~/rpmbuild/SOURCES/v${VERSION}.tar.gz
-          cp packaging/rpm/flume.spec ~/rpmbuild/SPECS/
-          rpmbuild -bb ~/rpmbuild/SPECS/flume.spec || echo "RPM build requires cargo in rpmbuild - using pre-built binary"
+          # Prepare compressed man page
+          gzip -9 -k doc/flume.1
 
-          # Alternative: create RPM from pre-built binary using fpm if rpmbuild cargo fails
-          if ! ls ~/rpmbuild/RPMS/x86_64/*.rpm 2>/dev/null; then
-            sudo gem install fpm 2>/dev/null || sudo apt-get install -y ruby-dev && sudo gem install fpm
-            fpm -s dir -t rpm \
-              -n flume \
-              -v ${VERSION} \
-              --license "Apache-2.0" \
-              --url "https://github.com/FlumeIRC/flume" \
-              --description "Modern terminal IRC client" \
-              --maintainer "emilio@flumeirc.io" \
-              target/release/flume=/usr/bin/flume \
-              doc/flume.1=/usr/share/man/man1/flume.1 \
-              LICENSE=/usr/share/doc/flume/LICENSE
-          fi
+          for ARCH_PAIR in "amd64:amd64:x86_64" "arm64:arm64:aarch64"; do
+            DEB_ARCH=$(echo $ARCH_PAIR | cut -d: -f1)
+            DIR_ARCH=$(echo $ARCH_PAIR | cut -d: -f2)
+            RPM_ARCH=$(echo $ARCH_PAIR | cut -d: -f3)
 
-      # ── Clone packages repo and update ──
+            cat > nfpm-${DEB_ARCH}.yaml <<EOF
+          name: flume
+          arch: ${DEB_ARCH}
+          version: ${VERSION}
+          maintainer: Emilio A. Escobar <emilio@flumeirc.io>
+          description: Modern terminal IRC client
+          homepage: https://github.com/FlumeIRC/flume
+          license: Apache-2.0
+          contents:
+            - src: binaries/${DIR_ARCH}/flume
+              dst: /usr/bin/flume
+              file_info:
+                mode: 0755
+            - src: doc/flume.1.gz
+              dst: /usr/share/man/man1/flume.1.gz
+            - src: LICENSE
+              dst: /usr/share/doc/flume/LICENSE
+          rpm:
+            group: Applications/Internet
+          EOF
+
+            nfpm package -f nfpm-${DEB_ARCH}.yaml -p deb -t "target/flume_${VERSION}_${DEB_ARCH}.deb"
+            nfpm package -f nfpm-${DEB_ARCH}.yaml -p rpm -t "target/flume-${VERSION}-1.${RPM_ARCH}.rpm"
+
+            # Sign the RPM
+            echo "%_gpg_name packages@flumeirc.io" > ~/.rpmmacros
+            rpmsign --addsign "target/flume-${VERSION}-1.${RPM_ARCH}.rpm" || echo "rpmsign not available, skipping RPM signing"
+          done
+
+      # ── Clone packages repo ──
       - name: Checkout packages repo
         uses: actions/checkout@v4
         with:
@@ -96,14 +98,19 @@ jobs:
           cd packages-repo
           mkdir -p apt/pool/main
           mkdir -p apt/dists/stable/main/binary-amd64
+          mkdir -p apt/dists/stable/main/binary-arm64
 
-          # Copy .deb
+          # Copy .debs
           cp ../target/flume_${VERSION}_amd64.deb apt/pool/main/
+          cp ../target/flume_${VERSION}_arm64.deb apt/pool/main/
 
-          # Generate Packages file
+          # Generate Packages files
           cd apt
           dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
           gzip -9c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+
+          cp dists/stable/main/binary-amd64/Packages dists/stable/main/binary-arm64/Packages
+          cp dists/stable/main/binary-amd64/Packages.gz dists/stable/main/binary-arm64/Packages.gz
 
           # Generate Release file
           cd dists/stable
@@ -112,17 +119,15 @@ jobs:
           Label: FlumeIRC
           Suite: stable
           Codename: stable
-          Architectures: amd64
+          Architectures: amd64 arm64
           Components: main
           Description: Flume IRC client packages
           RELEASE
-          # Fix indentation
           sed -i 's/^          //' Release
 
           # Sign Release file
           gpg --batch --yes --armor --detach-sign -o Release.gpg Release
           gpg --batch --yes --clearsign -o InRelease Release
-
           cd ../../../
 
       # ── Update RPM repository ──
@@ -130,24 +135,19 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           cd packages-repo
-          mkdir -p rpm/packages
+          mkdir -p rpm/packages/x86_64
+          mkdir -p rpm/packages/aarch64
 
-          # Copy RPM (from rpmbuild or fpm)
-          cp ~/rpmbuild/RPMS/x86_64/*.rpm rpm/packages/ 2>/dev/null || cp *.rpm rpm/packages/ 2>/dev/null || echo "No RPM found"
+          # Copy RPMs
+          cp ../target/flume-${VERSION}-1.x86_64.rpm rpm/packages/x86_64/
+          cp ../target/flume-${VERSION}-1.aarch64.rpm rpm/packages/aarch64/
 
-          # Create repo metadata (if createrepo is available)
-          if command -v createrepo_c &>/dev/null; then
-            createrepo_c rpm/
-          elif command -v createrepo &>/dev/null; then
-            createrepo rpm/
-          else
-            sudo apt-get install -y createrepo-c 2>/dev/null && createrepo_c rpm/ || echo "createrepo not available, skipping"
-          fi
+          # Create repo metadata
+          sudo apt-get install -y createrepo-c
+          createrepo_c rpm/
 
           # Sign repo metadata
-          if [ -f rpm/repodata/repomd.xml ]; then
-            gpg --batch --yes --armor --detach-sign -o rpm/repodata/repomd.xml.asc rpm/repodata/repomd.xml
-          fi
+          gpg --batch --yes --armor --detach-sign -o rpm/repodata/repomd.xml.asc rpm/repodata/repomd.xml
 
       # ── Create index and GPG key page ──
       - name: Create index page
@@ -159,7 +159,6 @@ jobs:
           gpg --armor --export packages@flumeirc.io > gpg/flume-signing-key.asc
 
           # Create repo config for dnf/yum
-          mkdir -p rpm
           cat > rpm/flume.repo <<'REPO'
           [flume]
           name=Flume IRC Client
@@ -190,7 +189,6 @@ jobs:
           </pre>
           <h2>GPG Key</h2>
           <p><a href="/gpg/flume-signing-key.asc">Download signing key</a></p>
-          <p>Fingerprint: A54CE1BB2C816FED634C36799839CBB78EDBABE9</p>
           </body>
           </html>
           HTML

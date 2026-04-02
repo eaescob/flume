@@ -101,13 +101,14 @@ fn global_bindings() -> HashMap<KeyCombo, InputAction> {
     m.insert(KeyCombo::ctrl('c'), InputAction::Quit);
     m.insert(KeyCombo::ctrl('x'), InputAction::ServerCycle);
 
-    // Buffer navigation
+    // Buffer navigation (Alt+1-9 = buffers 1-9, Alt+0 = buffer 10)
     for i in 1u8..=9 {
         m.insert(
             KeyCombo::alt_char((b'0' + i) as char),
             InputAction::BufferJump(i),
         );
     }
+    m.insert(KeyCombo::alt_char('0'), InputAction::BufferJump(10));
     m.insert(KeyCombo::alt(KeyCode::Left), InputAction::BufferPrev);
     m.insert(KeyCombo::alt(KeyCode::Right), InputAction::BufferNext);
 

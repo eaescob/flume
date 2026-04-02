@@ -191,44 +191,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Server event receivers — polled directly in the main loop (no bridge tasks).
-    // This matches irssi/weechat: socket data → process → render, all synchronous.
-    let mut server_event_rxs: Vec<mpsc::UnboundedReceiver<IrcEvent>> = Vec::new();
+    // Single unbounded collector — all server events flow here.
+    let (event_collector_tx, mut event_collector_rx) = mpsc::unbounded_channel::<IrcEvent>();
 
-    // Track which servers we've sent autojoin for
     let mut autojoin_sent: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut initial_connections_spawned = false;
 
-    // If vault already unlocked, spawn initial connections
     if app.vault_unlocked && has_servers {
         for name in &servers_to_connect {
-            spawn_connection(name, &flume_config, &vault, &mut server_event_rxs, &mut app);
+            spawn_connection(name, &flume_config, &vault, &event_collector_tx, &mut app);
         }
         initial_connections_spawned = true;
     }
 
-    // Main loop
     let tick_rate = Duration::from_millis(1000 / flume_config.ui.tick_rate_fps.max(1) as u64);
     let mut last_render = Instant::now();
 
-    // Collector channel: bridge tasks forward server events here.
-    let (event_collector_tx, mut event_collector_rx) = mpsc::unbounded_channel::<IrcEvent>();
-
-    // Spawn bridge tasks for initial connections
-    for rx in server_event_rxs.drain(..) {
-        let tx = event_collector_tx.clone();
-        tokio::spawn(async move {
-            let mut rx = rx;
-            while let Some(event) = rx.recv().await {
-                let _ = tx.send(event);
-            }
-        });
-    }
-
     loop {
-        // ── Phase 1: Drain ALL pending IRC events (irssi/weechat pattern) ──
-        // Process everything available before touching input or rendering.
-        while let Ok(event) = event_collector_rx.try_recv() {
+        // ── Step 1: select! waits for any event ──
+        tokio::select! {
+            Some(event) = event_collector_rx.recv() => {
                 let server_name = match &event {
                     IrcEvent::Connected { server_name, .. } => server_name.clone(),
                     IrcEvent::Disconnected { server_name, .. } => server_name.clone(),
@@ -492,16 +474,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                } // end inner drain while
-            } // end Phase 1 drain while
-
-        // ── Phase 2: Wait for ANY event (IRC, terminal, DCC, LLM, tick) ──
-        tokio::select! {
-            // IRC events — just wake up, drain happens in Phase 3
-            Some(_event) = event_collector_rx.recv() => {
-                // Re-queue it since we consumed it
-                // Actually, handle_irc_event it directly
-                let _ = app.handle_irc_event(&_event);
+                }
             }
             Some(event) = term_rx.recv() => {
                 input::handle_input(&mut app, event, &mut vault).await;
@@ -509,7 +482,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Check if vault was just unlocked — spawn initial connections
                 if app.vault_unlocked && !initial_connections_spawned && has_servers {
                     for name in &servers_to_connect {
-                        spawn_connection(name, &flume_config, &vault, &mut server_event_rxs, &mut app);
+                        spawn_connection(name, &flume_config, &vault, &event_collector_tx, &mut app);
                     }
                     initial_connections_spawned = true;
                 }
@@ -631,7 +604,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Check if /connect was requested
                 if let Some(name) = app.connect_to.take() {
-                    spawn_connection(&name, &flume_config, &vault, &mut server_event_rxs, &mut app);
+                    spawn_connection(&name, &flume_config, &vault, &event_collector_tx, &mut app);
                     // Switch to the new server
                     app.switch_server(&name);
                 }
@@ -764,7 +737,7 @@ fn spawn_connection(
     name: &str,
     flume_config: &flume_core::config::general::FlumeConfig,
     vault: &Option<Vault>,
-    server_event_rxs: &mut Vec<mpsc::UnboundedReceiver<IrcEvent>>,
+    event_collector_tx: &mpsc::UnboundedSender<IrcEvent>,
     app: &mut app::App,
 ) {
     let server_config = match config::load_server_config(name) {
@@ -795,7 +768,14 @@ fn spawn_connection(
     }
 
     // Store the event receiver — polled directly in the main loop
-    server_event_rxs.push(handle.event_rx);
+    // Bridge: forward server events to collector (simple, non-blocking)
+    let tx = event_collector_tx.clone();
+    let mut event_rx = handle.event_rx;
+    tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            if tx.send(event).is_err() { break; }
+        }
+    });
 
     app.system_message_to(&display_name, &format!("Connecting to {}...", display_name));
 }

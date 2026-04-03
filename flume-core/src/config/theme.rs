@@ -22,6 +22,10 @@ pub struct ThemeMeta {
     pub name: String,
     #[serde(default)]
     pub author: String,
+    /// When true, all background colors become transparent (Color::Reset),
+    /// allowing the terminal's background/image to show through.
+    #[serde(default)]
+    pub transparent: bool,
 }
 
 impl Default for ThemeMeta {
@@ -29,6 +33,7 @@ impl Default for ThemeMeta {
         ThemeMeta {
             name: default_theme_name(),
             author: String::new(),
+            transparent: false,
         }
     }
 }

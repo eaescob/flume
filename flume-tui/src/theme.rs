@@ -68,7 +68,7 @@ impl Theme {
     /// Build a Theme from a ThemeConfig by resolving all color strings.
     pub fn from_config(config: &ThemeConfig) -> Self {
         let e = &config.elements;
-        Theme {
+        let mut t = Theme {
             name: config.meta.name.clone(),
             title_bar_bg: resolve(&e.title_bar_bg),
             title_bar_fg: resolve(&e.title_bar_fg),
@@ -110,7 +110,19 @@ impl Theme {
                 .collect(),
             theme_file: None,
             last_mtime: None,
+        };
+
+        // Transparent mode: all backgrounds become Color::Reset
+        if config.meta.transparent {
+            t.title_bar_bg = Color::Reset;
+            t.status_bar_bg = Color::Reset;
+            t.input_bg = Color::Reset;
+            t.buffer_list_bg = Color::Reset;
+            t.nick_list_bg = Color::Reset;
+            t.search_match_bg = Color::Reset;
         }
+
+        t
     }
 
     /// Load theme by name from the themes directory.

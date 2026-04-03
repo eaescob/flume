@@ -1,0 +1,56 @@
+[meta]
+name = "Miasma"
+author = "xero/OldJobobo (adapted for Flume)"
+
+[colors]
+background = "#222222"
+foreground = "#c2c2b0"
+highlight = "#c9a554"
+error = "#b36d43"
+warning = "#bb7744"
+success = "#5f875f"
+
+[nick_colors]
+palette = [
+    "#5f875f",
+    "#b36d43",
+    "#78824b",
+    "#bb7744",
+    "#c9a554",
+    "#d7c483",
+    "#685742",
+    "#c2c2b0",
+]
+
+[elements]
+title_bar_bg = "#2a2a2a"
+title_bar_fg = "#78824b"
+status_bar_bg = "#2a2a2a"
+status_bar_fg = "#c2c2b0"
+input_bg = "#222222"
+input_fg = "#c2c2b0"
+buffer_list_bg = "#2a2a2a"
+buffer_list_fg = "#666666"
+nick_list_bg = "#222222"
+nick_list_fg = "#666666"
+nick_list_op = "#5f875f"
+nick_list_voice = "#78824b"
+chat_timestamp = "#666666"
+chat_nick = "#c2c2b0"
+chat_message = "#c2c2b0"
+chat_own_nick = "#78824b"
+chat_action = "#bb7744"
+chat_notice = "#c9a554"
+chat_server = "#685742"
+chat_system = "#b36d43"
+chat_highlight = "#c9a554"
+chat_url = "#78824b"
+unread = "#b36d43"
+inactive = "#666666"
+active = "#c9a554"
+scroll_indicator = "#b36d43"
+search_match_bg = "#78824b"
+search_match_fg = "#222222"
+state_connected = "#5f875f"
+state_connecting = "#c9a554"
+state_disconnected = "#b36d43"

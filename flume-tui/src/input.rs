@@ -1244,6 +1244,8 @@ async fn process_input(
                     app.system_message("No URLs found in this buffer");
                 } else if args.is_empty() {
                     app.system_message(&format!("URLs in buffer ({} shown):", all_urls.len()));
+                    // Cache the URL list for subsequent /url <n> calls
+                    app.last_url_list = all_urls.iter().map(|(u, _)| u.clone()).collect();
                     for (i, (u, nick)) in all_urls.iter().enumerate() {
                         let label = if nick.is_empty() {
                             format!("  {}: {}", i + 1, u)
@@ -1254,10 +1256,16 @@ async fn process_input(
                     }
                     app.system_message("Use /url <number> to open");
                 } else {
+                    // Use cached list if available, otherwise use freshly built one
+                    let url_list: Vec<String> = if !app.last_url_list.is_empty() {
+                        app.last_url_list.clone()
+                    } else {
+                        all_urls.iter().map(|(u, _)| u.clone()).collect()
+                    };
                     let num_str = args.trim_start_matches("open").trim();
                     if let Ok(n) = num_str.parse::<usize>() {
-                        if n >= 1 && n <= all_urls.len() {
-                            let u = &all_urls[n - 1].0;
+                        if n >= 1 && n <= url_list.len() {
+                            let u = &url_list[n - 1];
                             app.system_message(&format!("Opening: {}", u));
                             let _ = std::process::Command::new(&app.url_open_command)
                                 .arg(u)

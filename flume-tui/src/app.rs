@@ -455,6 +455,8 @@ pub struct App {
     pub buffer_list_area: ratatui::layout::Rect,
     /// Chat area from last render (for mouse scroll).
     pub chat_area: ratatui::layout::Rect,
+    /// Last /url listing (cached for /url open <n>).
+    pub last_url_list: Vec<String>,
     // Global buffer for messages when no server is active
     global_messages: VecDeque<DisplayMessage>,
 }
@@ -534,6 +536,7 @@ impl App {
             mouse_changed: false,
             buffer_list_area: ratatui::layout::Rect::default(),
             chat_area: ratatui::layout::Rect::default(),
+            last_url_list: Vec::new(),
             global_messages: VecDeque::new(),
         }
     }

@@ -123,7 +123,6 @@ jobs:
                 \"version\": \"Latest\",
                 \"summary\": \"New port: irc/flume: Modern terminal IRC client\",
                 \"description\": \"New port: irc/flume\\n\\nFlume is a fast, modern, terminal-based IRC client built in Rust.\\nMulti-server, IRCv3, Lua/Python scripting, theming, split views,\\nDCC, LLM generation, emoji shortcodes.\\n\\nHomepage: https://github.com/FlumeIRC/flume\\nLicense: Apache-2.0\\nVersion: ${VERSION}\",
-                \"keywords\": [\"new-port\"],
                 \"severity\": \"Affects Some People\"
               }")
 

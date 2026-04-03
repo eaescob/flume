@@ -2824,33 +2824,34 @@ fn handle_snotice_command(args: &str, app: &mut App) {
             let mut buffer: Option<String> = None;
             let mut suppress = false;
 
+            // Helper: collect argument value, joining words until next --flag.
+            // Strips surrounding quotes if present.
+            fn collect_arg(words: &[&str], i: &mut usize) -> Option<String> {
+                *i += 1;
+                if *i >= words.len() { return None; }
+                let mut val = words[*i].to_string();
+                while *i + 1 < words.len() && !words[*i + 1].starts_with("--") {
+                    *i += 1;
+                    val.push(' ');
+                    val.push_str(words[*i]);
+                }
+                // Strip surrounding quotes
+                if (val.starts_with('"') && val.ends_with('"'))
+                    || (val.starts_with('\'') && val.ends_with('\''))
+                {
+                    val = val[1..val.len() - 1].to_string();
+                }
+                Some(val)
+            }
+
             let mut i = 0;
             while i < words.len() {
                 match words[i] {
                     "--match" | "-m" => {
-                        i += 1;
-                        if i < words.len() {
-                            // Collect until next flag
-                            let mut p = words[i].to_string();
-                            while i + 1 < words.len() && !words[i + 1].starts_with("--") {
-                                i += 1;
-                                p.push(' ');
-                                p.push_str(words[i]);
-                            }
-                            pattern = Some(p);
-                        }
+                        pattern = collect_arg(&words, &mut i);
                     }
                     "--format" | "-f" => {
-                        i += 1;
-                        if i < words.len() {
-                            let mut f = words[i].to_string();
-                            while i + 1 < words.len() && !words[i + 1].starts_with("--") {
-                                i += 1;
-                                f.push(' ');
-                                f.push_str(words[i]);
-                            }
-                            format = Some(f);
-                        }
+                        format = collect_arg(&words, &mut i);
                     }
                     "--buffer" | "-b" => {
                         i += 1;

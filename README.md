@@ -55,6 +55,18 @@ brew install FlumeIRC/tap/flume
 yay -S flume
 ```
 
+### Nix
+
+```sh
+nix profile install github:FlumeIRC/flume
+```
+
+Or try without installing:
+
+```sh
+nix run github:FlumeIRC/flume
+```
+
 ### Debian / Ubuntu
 
 ```sh

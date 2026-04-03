@@ -130,6 +130,39 @@ jobs:
         with:
           path: artifacts
 
+      - name: Generate FreeBSD port shar
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^DISTVERSION=.*/DISTVERSION=\t${VERSION}/" packaging/freebsd/Makefile
+
+          # Regenerate Makefile.crates from Cargo.lock
+          python3 -c "
+          import re
+          with open('Cargo.lock') as f:
+              content = f.read()
+          packages = re.findall(r'\[\[package\]\]\nname = \"(.+?)\"\nversion = \"(.+?)\"', content)
+          excluded = {'flume-core', 'flume-tui'}
+          crates = sorted([f'{name}-{ver}' for name, ver in packages if name not in excluded])
+          lines = ['CARGO_CRATES=\t' + crates[0] + ' \\\\']
+          for c in crates[1:-1]:
+              lines.append('\t\t' + c + ' \\\\')
+          lines.append('\t\t' + crates[-1])
+          print('\n'.join(lines))
+          " > packaging/freebsd/Makefile.crates
+          cd packaging/freebsd
+          {
+            echo '#!/bin/sh'
+            echo '# Shell archive for FreeBSD port: irc/flume'
+            echo '# Extract with: sh flume-port.shar'
+            echo ''
+            for f in Makefile Makefile.crates pkg-descr pkg-plist; do
+              echo "echo x - $f"
+              echo "sed 's/^X//' > '$f' << 'SHAR_END_$f'"
+              sed 's/^/X/' "$f"
+              echo "SHAR_END_$f"
+            done
+          } > ../../artifacts/flume-port.shar
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -138,6 +171,7 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.sha256
             artifacts/**/*.deb
+            artifacts/flume-port.shar
 
   publish-packages:
     needs: [release]

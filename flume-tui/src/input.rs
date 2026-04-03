@@ -1074,29 +1074,48 @@ async fn process_input(
                     }
                 } else {
                     app.viewing_global = false;
-                    // Jump by name — try exact match first, then substring
                     let target = args.to_lowercase();
-                    if let Some(ss) = app.active_server_state_mut() {
-                        // Exact match
+
+                    // Try exact server name first (case-insensitive)
+                    let server_match = app.server_order.iter()
+                        .find(|s| s.to_lowercase() == target)
+                        .cloned();
+                    if let Some(server_name) = server_match {
+                        app.switch_server(&server_name);
+                    } else if let Some(ss) = app.active_server_state_mut() {
+                        // Exact buffer match
                         if ss.buffers.contains_key(args) {
                             ss.switch_buffer(args);
                         } else if args == "server" {
                             ss.switch_buffer("");
                         } else {
-                            // Substring match
+                            // Substring match on buffers
                             let found = ss.buffer_order.iter()
                                 .find(|b| b.to_lowercase().contains(&target))
                                 .cloned();
                             if let Some(name) = found {
                                 ss.switch_buffer(&name);
                             } else {
-                                // Try as server name
-                                if app.servers.contains_key(args) {
-                                    app.switch_server(args);
+                                // Substring match on server names
+                                let server_found = app.server_order.iter()
+                                    .find(|s| s.to_lowercase().contains(&target))
+                                    .cloned();
+                                if let Some(server_name) = server_found {
+                                    app.switch_server(&server_name);
                                 } else {
                                     app.system_message(&format!("No buffer or server matching '{}'", args));
                                 }
                             }
+                        }
+                    } else {
+                        // No active server — try server match
+                        let server_found = app.server_order.iter()
+                            .find(|s| s.to_lowercase().contains(&target))
+                            .cloned();
+                        if let Some(server_name) = server_found {
+                            app.switch_server(&server_name);
+                        } else {
+                            app.system_message(&format!("No buffer or server matching '{}'", args));
                         }
                     }
                 }

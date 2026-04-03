@@ -2877,6 +2877,12 @@ fn handle_snotice_command(args: &str, app: &mut App) {
                 return;
             }
 
+            // Check for duplicate pattern
+            if let Some(idx) = app.snotice_configs.iter().position(|r| r.pattern == pat) {
+                app.system_message(&format!("Duplicate: rule {} already matches \"{}\"", idx + 1, pat));
+                return;
+            }
+
             let rule = flume_core::config::formats::SnoticeRuleConfig {
                 pattern: pat.clone(),
                 format,
@@ -2922,6 +2928,11 @@ fn handle_snotice_command(args: &str, app: &mut App) {
                 return;
             }
             let escaped = regex::escape(text);
+            // Check for duplicate
+            if let Some(idx) = app.snotice_configs.iter().position(|r| r.pattern == escaped) {
+                app.system_message(&format!("Already suppressed by rule {} (\"{}\")", idx + 1, &escaped[..escaped.len().min(60)]));
+                return;
+            }
             if regex::Regex::new(&escaped).is_ok() {
                 let rule = flume_core::config::formats::SnoticeRuleConfig {
                     pattern: escaped,
@@ -2989,17 +3000,32 @@ fn handle_snotice_command(args: &str, app: &mut App) {
             if let Some(text) = last_notice {
                 let raw = &text;
                 if rest.is_empty() || rest == "suppress" {
-                    let escaped = regex::escape(raw);
-                    let rule = flume_core::config::formats::SnoticeRuleConfig {
-                        pattern: escaped,
-                        format: None,
-                        buffer: None,
-                        suppress: true,
-                    };
-                    app.snotice_configs.push(rule);
-                    app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
-                    app.system_message(&format!("Suppressed: {}", &raw[..raw.len().min(80)]));
-                    app.system_message("Use /snotice save to persist");
+                    // Extract a general pattern: use the first ~40 chars as a substring match
+                    // This catches similar notices (different IPs/counts) instead of only the exact one
+                    let prefix_len = raw.len().min(60);
+                    // Find a good cut point (word boundary)
+                    let cut = raw[..prefix_len].rfind(' ').unwrap_or(prefix_len);
+                    let prefix = &raw[..cut];
+                    let escaped = regex::escape(prefix);
+
+                    // Check for duplicate
+                    if let Some(idx) = app.snotice_configs.iter().position(|r| r.pattern == escaped) {
+                        app.system_message(&format!("Already suppressed by rule {}", idx + 1));
+                        // Also check if any existing rule would match
+                    } else if app.snotice_rules.iter().any(|r| r.regex.is_match(raw) && r.suppress) {
+                        app.system_message("Already suppressed by an existing rule");
+                    } else {
+                        let rule = flume_core::config::formats::SnoticeRuleConfig {
+                            pattern: escaped,
+                            format: None,
+                            buffer: None,
+                            suppress: true,
+                        };
+                        app.snotice_configs.push(rule);
+                        app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
+                        app.system_message(&format!("Suppressed: {}", &prefix[..prefix.len().min(80)]));
+                        app.system_message("Use /snotice save to persist");
+                    }
                 } else if rest.starts_with("route ") {
                     let route_args = rest.strip_prefix("route ").unwrap().trim();
                     // Parse: <buffer> [--format <fmt>]
@@ -3007,18 +3033,24 @@ fn handle_snotice_command(args: &str, app: &mut App) {
                     let buf_name = route_parts[0].trim();
                     let fmt = route_parts.get(1).map(|s| s.trim().to_string());
                     let escaped = regex::escape(raw);
-                    let rule = flume_core::config::formats::SnoticeRuleConfig {
-                        pattern: escaped,
-                        format: fmt.clone(),
-                        buffer: Some(buf_name.to_string()),
-                        suppress: false,
-                    };
-                    app.snotice_configs.push(rule);
-                    app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
-                    if let Some(ref f) = fmt {
-                        app.system_message(&format!("Routing to '{}' with format '{}'. /snotice save to persist", buf_name, f));
+
+                    // Check for duplicate
+                    if let Some(idx) = app.snotice_configs.iter().position(|r| r.pattern == escaped) {
+                        app.system_message(&format!("Duplicate: rule {} already matches this notice", idx + 1));
                     } else {
-                        app.system_message(&format!("Routing to '{}'. /snotice save to persist", buf_name));
+                        let rule = flume_core::config::formats::SnoticeRuleConfig {
+                            pattern: escaped,
+                            format: fmt.clone(),
+                            buffer: Some(buf_name.to_string()),
+                            suppress: false,
+                        };
+                        app.snotice_configs.push(rule);
+                        app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
+                        if let Some(ref f) = fmt {
+                            app.system_message(&format!("Routing to '{}' with format '{}'. /snotice save to persist", buf_name, f));
+                        } else {
+                            app.system_message(&format!("Routing to '{}'. /snotice save to persist", buf_name));
+                        }
                     }
                 } else if rest == "show" {
                     app.system_message(&format!("Last notice text:"));

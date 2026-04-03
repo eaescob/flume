@@ -1236,12 +1236,15 @@ async fn process_input(
                     }
                 }
 
+                // Build reversed list (most recent first) — used for both display and opening
+                let recent_urls: Vec<&(String, String)> = all_urls.iter().rev().take(10).collect();
+
                 if all_urls.is_empty() {
                     app.system_message("No URLs found in this buffer");
                 } else if args.is_empty() {
                     // List recent URLs (last 10)
                     app.system_message(&format!("URLs in buffer ({} total):", all_urls.len()));
-                    for (i, (u, nick)) in all_urls.iter().rev().take(10).enumerate() {
+                    for (i, (u, nick)) in recent_urls.iter().enumerate() {
                         let label = if nick.is_empty() {
                             format!("  {}: {}", i + 1, u)
                         } else {
@@ -1253,9 +1256,8 @@ async fn process_input(
                 } else {
                     let num_str = args.trim_start_matches("open").trim();
                     if let Ok(n) = num_str.parse::<usize>() {
-                        if n >= 1 && n <= all_urls.len() {
-                            let idx = all_urls.len() - n;
-                            let u = &all_urls[idx].0;
+                        if n >= 1 && n <= recent_urls.len() {
+                            let u = &recent_urls[n - 1].0;
                             app.system_message(&format!("Opening: {}", u));
                             let _ = std::process::Command::new(&app.url_open_command)
                                 .arg(u)

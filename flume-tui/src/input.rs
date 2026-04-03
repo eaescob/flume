@@ -2897,16 +2897,57 @@ fn handle_snotice_command(args: &str, app: &mut App) {
         }
         "remove" | "rm" | "del" => {
             let rest = parts.get(1).copied().unwrap_or("").trim();
-            if let Ok(idx) = rest.parse::<usize>() {
-                if idx >= 1 && idx <= app.snotice_configs.len() {
-                    let removed = app.snotice_configs.remove(idx - 1);
-                    app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
-                    app.system_message(&format!("Removed rule {}: match=\"{}\"", idx, removed.pattern));
+            if rest.is_empty() {
+                app.system_message("Usage: /snotice remove <number|range>");
+                app.system_message("  Examples: /snotice remove 3");
+                app.system_message("           /snotice remove 1,4,5");
+                app.system_message("           /snotice remove 3-7");
+                app.system_message("           /snotice remove 1,3-5,8");
+                return;
+            }
+            // Parse comma-separated items, each can be a single number or range
+            let mut indices: Vec<usize> = Vec::new();
+            let mut parse_error = false;
+            for part in rest.split(',') {
+                let part = part.trim();
+                if let Some((start_s, end_s)) = part.split_once('-') {
+                    match (start_s.trim().parse::<usize>(), end_s.trim().parse::<usize>()) {
+                        (Ok(s), Ok(e)) if s >= 1 && e >= s => {
+                            for i in s..=e { indices.push(i); }
+                        }
+                        _ => { parse_error = true; break; }
+                    }
+                } else if let Ok(n) = part.parse::<usize>() {
+                    indices.push(n);
                 } else {
-                    app.system_message(&format!("Invalid rule number. Use /snotice list (1-{})", app.snotice_configs.len()));
+                    parse_error = true;
+                    break;
                 }
-            } else {
-                app.system_message("Usage: /snotice remove <number>");
+            }
+            if parse_error || indices.is_empty() {
+                app.system_message("Invalid range. Use numbers, ranges (3-7), or comma-separated (1,3-5,8)");
+                return;
+            }
+            // Deduplicate and sort descending so we remove from the end first
+            indices.sort_unstable();
+            indices.dedup();
+            let max = app.snotice_configs.len();
+            let invalid: Vec<_> = indices.iter().filter(|&&i| i < 1 || i > max).copied().collect();
+            if !invalid.is_empty() {
+                app.system_message(&format!("Invalid rule number(s): {:?}. Valid range: 1-{}", invalid, max));
+                return;
+            }
+            // Remove in reverse order to preserve indices
+            let mut removed_patterns: Vec<String> = Vec::new();
+            for &idx in indices.iter().rev() {
+                let removed = app.snotice_configs.remove(idx - 1);
+                removed_patterns.push(format!("{}: \"{}\"", idx, removed.pattern));
+            }
+            removed_patterns.reverse();
+            app.snotice_rules = crate::app::compile_snotice_rules(&app.snotice_configs);
+            app.system_message(&format!("Removed {} rule(s):", removed_patterns.len()));
+            for p in &removed_patterns {
+                app.system_message(&format!("  {}", p));
             }
         }
         "save" => {

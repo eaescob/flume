@@ -23,15 +23,75 @@ use flume_core::scripting::{ScriptAction, ScriptEvent, ScriptManager};
 
 use app::{GenerationKind, InputMode, PendingGeneration};
 
+/// Parsed command-line arguments.
+struct CliArgs {
+    server: Option<String>,
+    nick: Option<String>,
+    no_autoconnect: bool,
+    no_autoload_scripts: bool,
+}
+
+fn parse_args() -> CliArgs {
+    let args: Vec<String> = std::env::args().collect();
+    let mut cli = CliArgs {
+        server: None,
+        nick: None,
+        no_autoconnect: false,
+        no_autoload_scripts: false,
+    };
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-v" | "--version" => {
+                println!("Flume {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            "-h" | "--help" => {
+                println!("Flume {} — modern terminal IRC client", env!("CARGO_PKG_VERSION"));
+                println!();
+                println!("Usage: flume [OPTIONS]");
+                println!();
+                println!("Options:");
+                println!("  -v, --version              Print version and exit");
+                println!("  -h, --help                 Show this help and exit");
+                println!("  -s, --server <name>        Connect to a specific server on startup");
+                println!("  -n, --nick <nick>          Override the default nickname");
+                println!("  -x, --no-autoconnect       Don't auto-connect to servers");
+                println!("      --no-autoload-scripts  Don't auto-load scripts on startup");
+                println!();
+                println!("Config: ~/.config/flume/config.toml");
+                println!("Docs:   https://docs.flumeirc.io");
+                std::process::exit(0);
+            }
+            "-s" | "--server" => {
+                i += 1;
+                cli.server = args.get(i).cloned();
+            }
+            "-n" | "--nick" => {
+                i += 1;
+                cli.nick = args.get(i).cloned();
+            }
+            "-x" | "--no-autoconnect" => {
+                cli.no_autoconnect = true;
+            }
+            "--no-autoload-scripts" => {
+                cli.no_autoload_scripts = true;
+            }
+            other => {
+                eprintln!("Unknown option: {}", other);
+                eprintln!("Try 'flume --help' for usage");
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+    cli
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse CLI args
-    let args: Vec<String> = std::env::args().collect();
-    let server_arg = args
-        .iter()
-        .position(|a| a == "--server")
-        .and_then(|i| args.get(i + 1))
-        .cloned();
+    let cli = parse_args();
 
     // Set up logging to file
     let log_dir = config::data_dir().join("logs");
@@ -118,13 +178,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Load autoload scripts
-    if let Some(ref mut mgr) = script_manager {
-        let results = mgr.load_autoload();
-        for (name, result) in &results {
-            match result {
-                Ok(()) => tracing::info!("Loaded script: {}", name),
-                Err(e) => tracing::error!("Failed to load script {}: {}", name, e),
+    // Load autoload scripts (unless --no-autoload-scripts)
+    if !cli.no_autoload_scripts {
+        if let Some(ref mut mgr) = script_manager {
+            let results = mgr.load_autoload();
+            for (name, result) in &results {
+                match result {
+                    Ok(()) => tracing::info!("Loaded script: {}", name),
+                    Err(e) => tracing::error!("Failed to load script {}: {}", name, e),
+                }
             }
         }
     }
@@ -139,9 +201,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Channel for DCC events (progress, completion, chat messages)
     let (dcc_tx, mut dcc_rx) = mpsc::channel::<DccEvent>(256);
 
+    // Apply CLI nick override
+    if let Some(ref nick) = cli.nick {
+        app.irc_config.networks.iter_mut().for_each(|n| {
+            n.nick = Some(nick.clone());
+        });
+    }
+
     // Determine which servers to connect on startup
-    let servers_to_connect: Vec<String> = if let Some(ref name) = server_arg {
+    let servers_to_connect: Vec<String> = if let Some(ref name) = cli.server {
         vec![name.clone()]
+    } else if cli.no_autoconnect {
+        Vec::new()
     } else {
         // Connect all autoconnect servers
         app.irc_config

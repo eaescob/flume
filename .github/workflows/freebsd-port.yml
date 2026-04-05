@@ -65,14 +65,7 @@ jobs:
           git config user.name "Emilio A. Escobar"
           git config user.email "emilio@flumeirc.io"
           git add -A
-          git commit -q -m "irc/flume: new port - Modern terminal IRC client v${VERSION}
-
-Flume is a fast, modern, terminal-based IRC client built in Rust.
-Multi-server, IRCv3, Lua/Python scripting, theming, split views,
-DCC, LLM generation, emoji shortcodes.
-
-Homepage: https://github.com/FlumeIRC/flume
-License: Apache-2.0"
+          git commit -q -m "irc/flume: new port - Modern terminal IRC client v${VERSION}"
           git format-patch --stdout --root > "$GITHUB_WORKSPACE/flume-freebsd-port.patch"
           cd "$GITHUB_WORKSPACE"
           rm -rf "$TMPDIR"

@@ -106,41 +106,84 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         render_separator(frame, preview_chunks[1], SplitDirection::Vertical, theme);
         render_generation_preview(frame, preview_chunks[2], gen, theme);
     } else if let Some(ref split) = app.split {
-        // Split mode: chat1 | separator | chat2
-        let direction = match split.direction {
-            SplitDirection::Vertical => Direction::Horizontal,
-            SplitDirection::Horizontal => Direction::Vertical,
-        };
+        // Split mode with channel name headers
+        let primary_name = app.active_server_state()
+            .map(|ss| if ss.active_buffer.is_empty() { "server" } else { &ss.active_buffer })
+            .unwrap_or("?");
+        let secondary_name = if split.secondary_buffer.is_empty() { "server" } else { &split.secondary_buffer };
 
-        let split_chunks = Layout::default()
-            .direction(direction)
-            .constraints([
-                Constraint::Percentage(split.ratio),
-                Constraint::Length(1),
-                Constraint::Percentage(100 - split.ratio),
-            ])
-            .split(center[1]);
+        match split.direction {
+            SplitDirection::Vertical => {
+                // Side-by-side: [primary | sep | secondary]
+                // Each side has: header (1 line) + chat
+                let horiz = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(split.ratio),
+                        Constraint::Length(1),
+                        Constraint::Percentage(100 - split.ratio),
+                    ])
+                    .split(center[1]);
 
-        app.primary_pane_area = split_chunks[0];
-        app.secondary_pane_area = split_chunks[2];
-        chat_buffer::render(frame, split_chunks[0], app, theme);
-        // Show secondary channel name in the separator
-        let sep_label = Some(split.secondary_buffer.as_str());
-        render_separator_labeled(frame, split_chunks[1], split.direction, theme, sep_label);
+                // Primary pane: header + chat
+                let primary_parts = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Min(1)])
+                    .split(horiz[0]);
+                let primary_header = Line::from(Span::styled(
+                    format!(" {} ", primary_name),
+                    Style::default().fg(theme.active).add_modifier(Modifier::BOLD),
+                ));
+                frame.render_widget(Paragraph::new(primary_header).style(Style::default().bg(theme.status_bar_bg)), primary_parts[0]);
+                app.primary_pane_area = primary_parts[1];
+                chat_buffer::render(frame, primary_parts[1], app, theme);
 
-        let empty = VecDeque::new();
-        let messages = app.split_messages().unwrap_or(&empty);
-        let scroll = app.split_scroll_offset();
-        let search = app.split_search();
-        chat_buffer::render_buffer(
-            frame,
-            split_chunks[2],
-            messages,
-            scroll,
-            search,
-            &app.timestamp_format,
-            theme,
-        );
+                // Separator
+                render_separator(frame, horiz[1], split.direction, theme);
+
+                // Secondary pane: header + chat
+                let secondary_parts = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Min(1)])
+                    .split(horiz[2]);
+                let secondary_header = Line::from(Span::styled(
+                    format!(" {} ", secondary_name),
+                    Style::default().fg(theme.status_bar_fg).add_modifier(Modifier::BOLD),
+                ));
+                frame.render_widget(Paragraph::new(secondary_header).style(Style::default().bg(theme.status_bar_bg)), secondary_parts[0]);
+                app.secondary_pane_area = secondary_parts[1];
+
+                let empty = VecDeque::new();
+                let messages = app.split_messages().unwrap_or(&empty);
+                let scroll = app.split_scroll_offset();
+                let search = app.split_search();
+                chat_buffer::render_buffer(frame, secondary_parts[1], messages, scroll, search, &app.timestamp_format, theme);
+            }
+            SplitDirection::Horizontal => {
+                // Stacked: [primary / separator / secondary]
+                let vert = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Percentage(split.ratio),
+                        Constraint::Length(1),
+                        Constraint::Percentage(100 - split.ratio),
+                    ])
+                    .split(center[1]);
+
+                app.primary_pane_area = vert[0];
+                chat_buffer::render(frame, vert[0], app, theme);
+
+                // Separator with secondary channel label
+                render_separator_labeled(frame, vert[1], split.direction, theme, Some(secondary_name));
+
+                app.secondary_pane_area = vert[2];
+                let empty = VecDeque::new();
+                let messages = app.split_messages().unwrap_or(&empty);
+                let scroll = app.split_scroll_offset();
+                let search = app.split_search();
+                chat_buffer::render_buffer(frame, vert[2], messages, scroll, search, &app.timestamp_format, theme);
+            }
+        }
     } else {
         // Normal: just chat
         chat_buffer::render(frame, center[1], app, theme);

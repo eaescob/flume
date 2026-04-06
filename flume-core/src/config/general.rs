@@ -29,7 +29,22 @@ pub struct FlumeConfig {
     pub combos: CombosConfig,
     #[serde(default)]
     pub aliases: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub groups: std::collections::HashMap<String, GroupConfig>,
 }
+
+/// A buffer group: two channels displayed side by side as a single buffer entry.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GroupConfig {
+    pub channels: Vec<String>,
+    #[serde(default = "default_ratio")]
+    pub ratio: String,
+    #[serde(default = "default_direction")]
+    pub direction: String,
+}
+
+fn default_ratio() -> String { "50:50".to_string() }
+fn default_direction() -> String { "vertical".to_string() }
 
 impl Default for FlumeConfig {
     fn default() -> Self {
@@ -44,6 +59,7 @@ impl Default for FlumeConfig {
             formats: FormatsConfig::default(),
             combos: CombosConfig::default(),
             aliases: std::collections::HashMap::new(),
+            groups: std::collections::HashMap::new(),
         }
     }
 }

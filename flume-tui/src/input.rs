@@ -218,10 +218,10 @@ async fn execute_action(
         }
         InputAction::BufferJump(n) => {
             let idx = (n as usize) - 1;
-            if let Some(ss) = app.active_server_state_mut() {
-                let sorted = ss.sorted_buffers();
+            if let Some(ss) = app.active_server_state() {
+                let sorted = ss.sorted_buffers_with_groups(&app.groups, app.active_group.as_deref());
                 if let Some(name) = sorted.get(idx).cloned() {
-                    ss.switch_buffer(&name);
+                    switch_to_buffer_or_group(app, &name);
                 }
             }
         }
@@ -1206,6 +1206,30 @@ async fn process_input(
                     config.remove("aliases");
                 }
 
+                // Update groups section
+                if !app.groups.is_empty() {
+                    let mut groups_table = toml::Table::new();
+                    for (name, group) in &app.groups {
+                        let mut entry = toml::Table::new();
+                        entry.insert("channels".to_string(), toml::Value::Array(
+                            group.channels.iter().map(|c| toml::Value::String(c.clone())).collect()
+                        ));
+                        entry.insert("ratio".to_string(), toml::Value::String(
+                            format!("{}:{}", group.ratio, 100 - group.ratio)
+                        ));
+                        entry.insert("direction".to_string(), toml::Value::String(
+                            match group.direction {
+                                crate::split::SplitDirection::Vertical => "vertical".to_string(),
+                                crate::split::SplitDirection::Horizontal => "horizontal".to_string(),
+                            }
+                        ));
+                        groups_table.insert(name.clone(), toml::Value::Table(entry));
+                    }
+                    config.insert("groups".to_string(), toml::Value::Table(groups_table));
+                } else {
+                    config.remove("groups");
+                }
+
                 // Update mouse setting
                 if let Some(toml::Value::Table(ref mut t)) = config.get_mut("ui") {
                     t.insert("mouse".to_string(), toml::Value::Boolean(app.mouse_enabled));
@@ -1431,6 +1455,9 @@ async fn process_input(
             }
             "alias" => {
                 handle_alias_command(args, app);
+            }
+            "group" => {
+                handle_group_command(args, app);
             }
             "mouse" => {
                 match args.trim() {
@@ -1871,6 +1898,7 @@ fn show_help(app: &mut App) {
     app.system_message("    /color combo list|add|rm — Manage color combos");
     app.system_message("    /colors                  — Show available colors");
     app.system_message("    /alias [name] [cmd]      — Manage command aliases");
+    app.system_message("    /group create|list|disband — Buffer groups (paired channels)");
     app.system_message("    /mouse enable|disable    — Toggle mouse support");
     app.system_message("    /set [key] [value]       — View or change settings");
     app.system_message("    /quote <raw line>        — Send raw IRC line");
@@ -2154,6 +2182,24 @@ fn show_help_topic(topic: &str, app: &mut App) {
             app.system_message("  /mouse         — show current state");
             app.system_message("");
             app.system_message("  Persisted via /save (or set ui.mouse in config.toml).");
+        }
+        "group" => {
+            app.system_message("/group create|list|disband");
+            app.system_message("  Buffer groups — view two channels as a single buffer entry.");
+            app.system_message("");
+            app.system_message("  /group create <name> [v|h] [ratio] <chan1> <chan2>");
+            app.system_message("    Create a group. Defaults: vertical, 50:50.");
+            app.system_message("    /group create ops v 50:50 #ops-east #ops-west");
+            app.system_message("    /group create monitor h 30:70 #alerts #ops");
+            app.system_message("    /group create watch #chan1 #chan2");
+            app.system_message("");
+            app.system_message("  /group list                — show all groups");
+            app.system_message("  /group disband <name>      — remove a group");
+            app.system_message("");
+            app.system_message("  Groups appear as [name] in the buffer list. Select to view");
+            app.system_message("  both channels side by side. /focus swaps the active pane.");
+            app.system_message("  With mouse: click a pane to focus it.");
+            app.system_message("  Persisted via /save.");
         }
         "set" => {
             app.system_message("/set [section.key] [value]");
@@ -2610,24 +2656,33 @@ fn handle_mouse_event(app: &mut App, event: crossterm::event::MouseEvent) {
             if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height {
                 let rel_y = (y - area.y) as usize;
                 if rel_y == 0 {
-                    // Click on "flume" global buffer
                     app.viewing_global = true;
                 } else if rel_y == 1 {
-                    // Click on server header → switch to server buffer
                     app.viewing_global = false;
+                    app.leave_group();
                     if let Some(ss) = app.active_server_state_mut() {
                         ss.switch_buffer("");
                     }
                 } else {
-                    // Click on a channel/PM buffer
                     app.viewing_global = false;
                     let buf_idx = rel_y - 2;
-                    if let Some(ss) = app.active_server_state_mut() {
-                        let sorted = ss.sorted_buffers();
+                    if let Some(ss) = app.active_server_state() {
+                        let sorted = ss.sorted_buffers_with_groups(&app.groups, app.active_group.as_deref());
                         if let Some(name) = sorted.get(buf_idx).cloned() {
-                            ss.switch_buffer(&name);
+                            switch_to_buffer_or_group(app, &name);
                         }
                     }
+                }
+            }
+            // Check if click is in secondary split pane → swap focus
+            else {
+                let sec = app.secondary_pane_area;
+                if app.split.is_some()
+                    && x >= sec.x && x < sec.x + sec.width
+                    && y >= sec.y && y < sec.y + sec.height
+                    && sec.width > 0
+                {
+                    app.swap_split_focus();
                 }
             }
         }
@@ -2656,6 +2711,134 @@ fn handle_mouse_event(app: &mut App, event: crossterm::event::MouseEvent) {
             }
         }
         _ => {}
+    }
+}
+
+/// Switch to a buffer or group by name. Handles [group] bracket syntax.
+fn switch_to_buffer_or_group(app: &mut App, name: &str) {
+    if name.starts_with('[') && name.ends_with(']') {
+        let group_name = &name[1..name.len()-1];
+        app.switch_to_group(group_name);
+    } else {
+        app.leave_group();
+        if let Some(ss) = app.active_server_state_mut() {
+            ss.switch_buffer(name);
+        }
+    }
+}
+
+fn handle_group_command(args: &str, app: &mut App) {
+    use crate::split::SplitDirection;
+    use crate::app::BufferGroup;
+
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    let subcmd = parts.first().copied().unwrap_or("");
+
+    match subcmd {
+        "create" | "add" => {
+            let rest = parts.get(1).copied().unwrap_or("").trim();
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            if words.len() < 3 {
+                app.system_message("Usage: /group create <name> [v|h] [ratio] <channel1> <channel2>");
+                app.system_message("  /group create ops v 50:50 #ops-east #ops-west");
+                app.system_message("  /group create monitor h 30:70 #alerts #ops");
+                app.system_message("  /group create watch #channel1 #channel2  (defaults: v 50:50)");
+                return;
+            }
+
+            let name = words[0].to_lowercase();
+            let mut direction = SplitDirection::Vertical;
+            let mut ratio: u16 = 50;
+            let mut channels: Vec<String> = Vec::new();
+
+            for &w in &words[1..] {
+                match w {
+                    "v" | "vertical" => direction = SplitDirection::Vertical,
+                    "h" | "horizontal" => direction = SplitDirection::Horizontal,
+                    _ if w.contains(':') => {
+                        if let Some(r) = w.split(':').next().and_then(|s| s.parse::<u16>().ok()) {
+                            ratio = r.clamp(10, 90);
+                        }
+                    }
+                    _ => channels.push(w.to_string()),
+                }
+            }
+
+            if channels.len() != 2 {
+                app.system_message("A group requires exactly 2 channels");
+                return;
+            }
+
+            // Validate channels exist
+            if let Some(ss) = app.active_server_state() {
+                for ch in &channels {
+                    let key = crate::app::ServerState::normalize_buffer_name(ch);
+                    if !ss.buffers.contains_key(&key) {
+                        app.system_message(&format!("Buffer '{}' not found. Join the channel first.", ch));
+                        return;
+                    }
+                }
+            } else {
+                app.system_message("No active server");
+                return;
+            }
+
+            if app.groups.contains_key(&name) {
+                app.system_message(&format!("Group '{}' already exists. Use /group disband first.", name));
+                return;
+            }
+
+            app.groups.insert(name.clone(), BufferGroup {
+                channels: [channels[0].clone(), channels[1].clone()],
+                ratio,
+                direction,
+            });
+            app.system_message(&format!("Created group '{}': {} + {} ({}:{})",
+                name, channels[0], channels[1], ratio, 100 - ratio));
+            app.system_message("Use /save to persist. Switch to it with /go or Alt+number.");
+        }
+        "list" | "ls" | "" => {
+            if app.groups.is_empty() {
+                app.system_message("No buffer groups defined");
+                app.system_message("Usage: /group create <name> [v|h] [ratio] <channel1> <channel2>");
+            } else {
+                app.system_message("Buffer groups:");
+                let mut names: Vec<String> = app.groups.keys().cloned().collect();
+                names.sort();
+                let lines: Vec<String> = names.iter().map(|n| {
+                    let g = &app.groups[n];
+                    let dir = match g.direction {
+                        SplitDirection::Vertical => "v",
+                        SplitDirection::Horizontal => "h",
+                    };
+                    format!("  {} = {} + {} ({}:{} {})", n, g.channels[0], g.channels[1], g.ratio, 100 - g.ratio, dir)
+                }).collect();
+                for line in &lines {
+                    app.system_message(line);
+                }
+            }
+        }
+        "disband" | "remove" | "rm" | "del" => {
+            let name = parts.get(1).copied().unwrap_or("").trim().to_lowercase();
+            if name.is_empty() {
+                app.system_message("Usage: /group disband <name>");
+                return;
+            }
+            if app.groups.remove(&name).is_some() {
+                // If we're currently viewing this group, unsplit
+                if app.active_group.as_deref() == Some(&name) {
+                    app.split = None;
+                    app.active_group = None;
+                }
+                app.system_message(&format!("Disbanded group '{}'. Channels are now individual buffers.", name));
+                app.system_message("Use /save to persist");
+            } else {
+                app.system_message(&format!("No group named '{}'. See /group list", name));
+            }
+        }
+        _ => {
+            app.system_message("Usage: /group create|list|disband");
+        }
     }
 }
 

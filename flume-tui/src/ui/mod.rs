@@ -121,6 +121,8 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
             ])
             .split(center[1]);
 
+        app.primary_pane_area = split_chunks[0];
+        app.secondary_pane_area = split_chunks[2];
         chat_buffer::render(frame, split_chunks[0], app, theme);
         render_separator(frame, split_chunks[1], split.direction, theme);
 

@@ -150,6 +150,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         flume_config.aliases.clone(),
         flume_config.ui.mouse,
+        {
+            use crate::split::SplitDirection;
+            flume_config.groups.iter().map(|(name, cfg)| {
+                let channels = if cfg.channels.len() >= 2 {
+                    [cfg.channels[0].clone(), cfg.channels[1].clone()]
+                } else {
+                    [cfg.channels.first().cloned().unwrap_or_default(), String::new()]
+                };
+                let ratio_parts: Vec<&str> = cfg.ratio.split(':').collect();
+                let ratio = ratio_parts.first()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(50);
+                let direction = match cfg.direction.as_str() {
+                    "horizontal" | "h" => SplitDirection::Horizontal,
+                    _ => SplitDirection::Vertical,
+                };
+                (name.clone(), app::BufferGroup { channels, ratio, direction })
+            }).collect()
+        },
     );
     app.irc_config = irc_config;
     app.active_theme = flume_config.ui.theme.clone();

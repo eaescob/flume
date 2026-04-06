@@ -39,20 +39,45 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             .add_modifier(Modifier::BOLD),
     )));
 
-    // Buffer list — sorted alphabetically, server buffer first
-    let sorted_buffers = ss.sorted_buffers();
+    // Buffer list — sorted alphabetically with group entries
+    let sorted_buffers = ss.sorted_buffers_with_groups(&app.groups, app.active_group.as_deref());
 
     for (visual_idx, buf_name) in sorted_buffers.iter().enumerate() {
-        let idx = visual_idx + 1; // 1-indexed display number
+        let idx = visual_idx + 1;
+        let is_group = buf_name.starts_with('[') && buf_name.ends_with(']');
         let display = if buf_name.is_empty() {
             "server"
         } else {
             buf_name.as_str()
         };
-        let is_active = *buf_name == ss.active_buffer;
-        let buf = ss.buffers.get(buf_name.as_str());
-        let unread = buf.map(|b| b.unread_count).unwrap_or(0);
-        let highlights = buf.map(|b| b.highlight_count).unwrap_or(0);
+
+        let is_active = if is_group {
+            let group_name = &buf_name[1..buf_name.len()-1];
+            app.active_group.as_deref() == Some(group_name)
+        } else {
+            *buf_name == ss.active_buffer && app.active_group.is_none()
+        };
+
+        // For groups, aggregate unread from both member channels
+        let (unread, highlights) = if is_group {
+            let group_name = &buf_name[1..buf_name.len()-1];
+            if let Some(g) = app.groups.get(group_name) {
+                let u: u32 = g.channels.iter()
+                    .filter_map(|c| ss.buffers.get(c.as_str()))
+                    .map(|b| b.unread_count)
+                    .sum();
+                let h: u32 = g.channels.iter()
+                    .filter_map(|c| ss.buffers.get(c.as_str()))
+                    .map(|b| b.highlight_count)
+                    .sum();
+                (u, h)
+            } else {
+                (0, 0)
+            }
+        } else {
+            let buf = ss.buffers.get(buf_name.as_str());
+            (buf.map(|b| b.unread_count).unwrap_or(0), buf.map(|b| b.highlight_count).unwrap_or(0))
+        };
 
         let (label, style) = if is_active {
             (

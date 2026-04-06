@@ -262,7 +262,7 @@ impl ServerState {
     /// Normalize a buffer name. IRC channels are case-insensitive,
     /// so we lowercase channel names to avoid duplicate buffers
     /// (e.g., #Rust vs #rust vs #RUST from bouncers).
-    fn normalize_buffer_name(name: &str) -> String {
+    pub fn normalize_buffer_name(name: &str) -> String {
         if name.starts_with('#') || name.starts_with('&') {
             name.to_lowercase()
         } else {
@@ -313,6 +313,32 @@ impl ServerState {
 
     /// Return buffer names sorted the same way they display in the sidebar:
     /// server buffer first, then alphabetical (case-insensitive).
+    /// When groups are active, group names replace their member channels.
+    pub fn sorted_buffers_with_groups(&self, groups: &HashMap<String, BufferGroup>, active_group: Option<&str>) -> Vec<String> {
+        // Collect channels that are part of the active group (to exclude individually)
+        let grouped_channels: std::collections::HashSet<String> = groups.values()
+            .flat_map(|g| g.channels.iter().map(|c| c.to_lowercase()))
+            .collect();
+
+        let mut sorted: Vec<String> = self.buffer_order.iter()
+            .filter(|b| !grouped_channels.contains(&b.to_lowercase()))
+            .cloned()
+            .collect();
+
+        // Add group names
+        for name in groups.keys() {
+            sorted.push(format!("[{}]", name));
+        }
+
+        sorted.sort_by(|a, b| {
+            if a.is_empty() { return std::cmp::Ordering::Less; }
+            if b.is_empty() { return std::cmp::Ordering::Greater; }
+            a.to_lowercase().cmp(&b.to_lowercase())
+        });
+        sorted
+    }
+
+    /// Return buffer names sorted (without group logic, used by Alt+num etc).
     pub fn sorted_buffers(&self) -> Vec<String> {
         let mut sorted: Vec<String> = self.buffer_order.clone();
         sorted.sort_by(|a, b| {
@@ -445,6 +471,14 @@ pub struct App {
     pub dcc_chat_senders: HashMap<u64, tokio::sync::mpsc::Sender<String>>,
     /// User-defined color combos (runtime copy, persisted via /save).
     pub combos: std::collections::HashMap<String, flume_core::config::combos::ComboDefinition>,
+    /// Buffer groups: named pairs of channels shown as a single buffer entry.
+    pub groups: HashMap<String, BufferGroup>,
+    /// Name of the currently active group (if viewing one).
+    pub active_group: Option<String>,
+    /// Primary split pane area (for mouse click focus).
+    pub primary_pane_area: ratatui::layout::Rect,
+    /// Secondary split pane area (for mouse click focus).
+    pub secondary_pane_area: ratatui::layout::Rect,
     /// User-defined command aliases (runtime copy, persisted via /save).
     pub aliases: std::collections::HashMap<String, String>,
     /// Mouse support enabled.
@@ -459,6 +493,14 @@ pub struct App {
     pub last_url_list: Vec<String>,
     // Global buffer for messages when no server is active
     global_messages: VecDeque<DisplayMessage>,
+}
+
+/// A buffer group: two channels displayed as a single buffer entry.
+#[derive(Clone)]
+pub struct BufferGroup {
+    pub channels: [String; 2],
+    pub ratio: u16,
+    pub direction: crate::split::SplitDirection,
 }
 
 /// State for nick tab-completion cycling.
@@ -486,6 +528,7 @@ impl App {
         combos: std::collections::HashMap<String, flume_core::config::combos::ComboDefinition>,
         aliases: std::collections::HashMap<String, String>,
         mouse_enabled: bool,
+        groups: HashMap<String, BufferGroup>,
     ) -> Self {
         // Load snotice rules from file, merge with any in [formats] config
         let mut snotice_configs = flume_core::config::load_snotice_rules();
@@ -534,6 +577,10 @@ impl App {
             aliases,
             mouse_enabled,
             mouse_changed: false,
+            groups,
+            active_group: None,
+            primary_pane_area: ratatui::layout::Rect::default(),
+            secondary_pane_area: ratatui::layout::Rect::default(),
             buffer_list_area: ratatui::layout::Rect::default(),
             chat_area: ratatui::layout::Rect::default(),
             last_url_list: Vec::new(),
@@ -558,6 +605,39 @@ impl App {
     pub fn switch_server(&mut self, name: &str) {
         if self.servers.contains_key(name) {
             self.active_server = Some(name.to_string());
+        }
+    }
+
+    /// Switch to a buffer group — activates split with both channels.
+    pub fn switch_to_group(&mut self, group_name: &str) {
+        let group = match self.groups.get(group_name) {
+            Some(g) => g.clone(),
+            None => return,
+        };
+        // Leave any current group first
+        self.leave_group();
+
+        let server = self.active_server.clone().unwrap_or_default();
+        if let Some(ss) = self.servers.get_mut(&server) {
+            ss.switch_buffer(&group.channels[0]);
+        }
+        self.split = Some(crate::split::SplitState::new(
+            group.direction.clone(),
+            server,
+            group.channels[1].clone(),
+        ));
+        // Set the ratio
+        if let Some(ref mut s) = self.split {
+            s.ratio = group.ratio;
+        }
+        self.active_group = Some(group_name.to_string());
+    }
+
+    /// Leave the current group — clears the split.
+    pub fn leave_group(&mut self) {
+        if self.active_group.is_some() {
+            self.split = None;
+            self.active_group = None;
         }
     }
 

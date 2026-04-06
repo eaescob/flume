@@ -1069,14 +1069,13 @@ async fn process_input(
                     app.viewing_global = true;
                 } else if let Ok(num) = args.parse::<usize>() {
                     app.viewing_global = false;
-                    // Jump by window number (1-indexed, alphabetical order)
                     if num == 0 {
                         app.system_message("Window numbers start at 1");
-                    } else if let Some(ss) = app.active_server_state_mut() {
-                        let sorted = ss.sorted_buffers();
+                    } else if let Some(ss) = app.active_server_state() {
+                        let sorted = ss.sorted_buffers_with_groups(&app.groups, app.active_group.as_deref());
                         let idx = num - 1;
                         if let Some(name) = sorted.get(idx).cloned() {
-                            ss.switch_buffer(&name);
+                            switch_to_buffer_or_group(app, &name);
                         } else {
                             app.system_message(&format!("No window #{}", num));
                         }
@@ -1085,46 +1084,62 @@ async fn process_input(
                     app.viewing_global = false;
                     let target = args.to_lowercase();
 
-                    // Try exact server name first (case-insensitive)
-                    let server_match = app.server_order.iter()
+                    // Try exact group name first
+                    if app.groups.contains_key(&target) {
+                        app.switch_to_group(&target);
+                    }
+                    // Try exact server name (case-insensitive)
+                    else if let Some(server_name) = app.server_order.iter()
                         .find(|s| s.to_lowercase() == target)
-                        .cloned();
-                    if let Some(server_name) = server_match {
+                        .cloned()
+                    {
                         app.switch_server(&server_name);
-                    } else if let Some(ss) = app.active_server_state_mut() {
-                        // Exact buffer match
-                        if ss.buffers.contains_key(args) {
-                            ss.switch_buffer(args);
-                        } else if args == "server" {
-                            ss.switch_buffer("");
-                        } else {
-                            // Substring match on buffers
-                            let found = ss.buffer_order.iter()
-                                .find(|b| b.to_lowercase().contains(&target))
-                                .cloned();
-                            if let Some(name) = found {
-                                ss.switch_buffer(&name);
+                    } else {
+                        // Collect match info without holding mutable borrow
+                        let match_result = if let Some(ss) = app.active_server_state() {
+                            if ss.buffers.contains_key(args) {
+                                Some(("buffer", args.to_string()))
+                            } else if args == "server" {
+                                Some(("buffer", String::new()))
                             } else {
-                                // Substring match on server names
-                                let server_found = app.server_order.iter()
-                                    .find(|s| s.to_lowercase().contains(&target))
-                                    .cloned();
-                                if let Some(server_name) = server_found {
-                                    app.switch_server(&server_name);
-                                } else {
-                                    app.system_message(&format!("No buffer or server matching '{}'", args));
+                                // Substring match on groups
+                                app.groups.keys()
+                                    .find(|g| g.contains(&target))
+                                    .cloned()
+                                    .map(|g| ("group", g))
+                                    .or_else(|| {
+                                        // Substring match on buffers
+                                        ss.buffer_order.iter()
+                                            .find(|b| b.to_lowercase().contains(&target))
+                                            .cloned()
+                                            .map(|b| ("buffer", b))
+                                    })
+                                    .or_else(|| {
+                                        // Substring match on servers
+                                        app.server_order.iter()
+                                            .find(|s| s.to_lowercase().contains(&target))
+                                            .cloned()
+                                            .map(|s| ("server", s))
+                                    })
+                            }
+                        } else {
+                            // No active server — try server match
+                            app.server_order.iter()
+                                .find(|s| s.to_lowercase().contains(&target))
+                                .cloned()
+                                .map(|s| ("server", s))
+                        };
+
+                        match match_result {
+                            Some(("group", name)) => app.switch_to_group(&name),
+                            Some(("buffer", name)) => {
+                                app.leave_group();
+                                if let Some(ss) = app.active_server_state_mut() {
+                                    ss.switch_buffer(&name);
                                 }
                             }
-                        }
-                    } else {
-                        // No active server — try server match
-                        let server_found = app.server_order.iter()
-                            .find(|s| s.to_lowercase().contains(&target))
-                            .cloned();
-                        if let Some(server_name) = server_found {
-                            app.switch_server(&server_name);
-                        } else {
-                            app.system_message(&format!("No buffer or server matching '{}'", args));
+                            Some(("server", name)) => app.switch_server(&name),
+                            _ => app.system_message(&format!("No buffer, group, or server matching '{}'", args)),
                         }
                     }
                 }

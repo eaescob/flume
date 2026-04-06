@@ -212,10 +212,9 @@ fn render_separator_labeled(
     theme: &Theme,
     label: Option<&str>,
 ) {
-    let sep_style = Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg);
+    let sep_style = Style::default().fg(theme.inactive);
     let label_style = Style::default()
         .fg(theme.active)
-        .bg(theme.status_bar_bg)
         .add_modifier(Modifier::BOLD);
 
     match direction {

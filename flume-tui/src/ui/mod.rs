@@ -10,7 +10,7 @@ pub mod topic_bar;
 use std::collections::VecDeque;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -53,7 +53,7 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         col_constraints.push(Constraint::Length(20));
     }
     col_constraints.push(Constraint::Min(1)); // center (topic + chat)
-    if show_nick_list && app.pending_generation.is_none() && app.split.is_none() {
+    if show_nick_list && app.pending_generation.is_none() {
         col_constraints.push(Constraint::Length(18));
     }
 
@@ -124,7 +124,9 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         app.primary_pane_area = split_chunks[0];
         app.secondary_pane_area = split_chunks[2];
         chat_buffer::render(frame, split_chunks[0], app, theme);
-        render_separator(frame, split_chunks[1], split.direction, theme);
+        // Show secondary channel name in the separator
+        let sep_label = Some(split.secondary_buffer.as_str());
+        render_separator_labeled(frame, split_chunks[1], split.direction, theme, sep_label);
 
         let empty = VecDeque::new();
         let messages = app.split_messages().unwrap_or(&empty);
@@ -149,9 +151,29 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
     input_line::render(frame, outer[2], app, theme);
 }
 
-/// Render a separator line between split panes.
-fn render_separator(frame: &mut Frame, area: Rect, direction: SplitDirection, theme: &Theme) {
+/// Render a separator line between split panes, optionally with a label.
+fn render_separator(
+    frame: &mut Frame,
+    area: Rect,
+    direction: SplitDirection,
+    theme: &Theme,
+) {
+    render_separator_labeled(frame, area, direction, theme, None);
+}
+
+/// Render a labeled separator between split panes.
+fn render_separator_labeled(
+    frame: &mut Frame,
+    area: Rect,
+    direction: SplitDirection,
+    theme: &Theme,
+    label: Option<&str>,
+) {
     let sep_style = Style::default().fg(theme.status_bar_fg).bg(theme.status_bar_bg);
+    let label_style = Style::default()
+        .fg(theme.active)
+        .bg(theme.status_bar_bg)
+        .add_modifier(Modifier::BOLD);
 
     match direction {
         SplitDirection::Vertical => {
@@ -161,11 +183,24 @@ fn render_separator(frame: &mut Frame, area: Rect, direction: SplitDirection, th
             frame.render_widget(Paragraph::new(lines), area);
         }
         SplitDirection::Horizontal => {
-            let bar = "─".repeat(area.width as usize);
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(bar, sep_style))),
-                area,
-            );
+            let width = area.width as usize;
+            let line = if let Some(name) = label {
+                // ── channel-name ──────────
+                let prefix = "── ";
+                let suffix_char = '─';
+                let label_len = prefix.len() + name.len() + 1; // +1 for space after
+                let remaining = width.saturating_sub(label_len);
+                let suffix: String = std::iter::repeat(suffix_char).take(remaining).collect();
+                Line::from(vec![
+                    Span::styled(prefix.to_string(), sep_style),
+                    Span::styled(name.to_string(), label_style),
+                    Span::styled(format!(" {}", suffix), sep_style),
+                ])
+            } else {
+                let bar = "─".repeat(width);
+                Line::from(Span::styled(bar, sep_style))
+            };
+            frame.render_widget(Paragraph::new(line), area);
         }
     }
 }

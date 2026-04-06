@@ -44,14 +44,18 @@ jobs:
 
       - name: Build binary
         run: |
-          # Release binaries are built WITHOUT Python to avoid libpython
-          # version mismatch across distros. Python scripting is available
-          # when building from source with --features python.
+          FEATURES=""
           BUILD_CMD="cargo"
           if [ "${{ matrix.use_cross }}" = "true" ]; then
             BUILD_CMD="cross"
+          else
+            # Enable Python on native builds (abi3 makes it portable across Python versions)
+            if python3 -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null; then
+              echo "Python detected, enabling python feature (abi3 stable ABI)"
+              FEATURES="--features python"
+            fi
           fi
-          $BUILD_CMD build --release --target ${{ matrix.target }} -p flume-tui
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 $BUILD_CMD build --release --target ${{ matrix.target }} -p flume-tui $FEATURES
 
       - name: Package binary
         run: |

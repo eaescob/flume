@@ -88,6 +88,8 @@ jobs:
               dst: /usr/share/man/man1/flume.1.gz
             - src: LICENSE
               dst: /usr/share/doc/flume/LICENSE
+          depends:
+            - python3
           rpm:
             group: Applications/Internet
           EOF

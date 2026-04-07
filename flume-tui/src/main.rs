@@ -197,44 +197,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Load autoload scripts (unless --no-autoload-scripts)
-    let mut script_load_results: Vec<(String, Result<(), String>)> = Vec::new();
-    if !cli.no_autoload_scripts {
-        if let Some(ref mut mgr) = script_manager {
-            let results = mgr.load_autoload();
-            for (name, result) in &results {
-                match result {
-                    Ok(()) => {
-                        tracing::info!("Loaded script: {}", name);
-                        script_load_results.push((name.clone(), Ok(())));
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to load script {}: {}", name, e);
-                        script_load_results.push((name.clone(), Err(e.to_string())));
-                    }
-                }
-            }
-        }
-    }
-
-    // Surface script load results to the global flume buffer
-    let loaded = script_load_results.iter().filter(|(_, r)| r.is_ok()).count();
-    let failed = script_load_results.iter().filter(|(_, r)| r.is_err()).count();
-    if loaded > 0 || failed > 0 {
-        app.system_message(&format!("Scripts: {} loaded, {} failed", loaded, failed));
-        for (name, result) in &script_load_results {
-            match result {
-                Ok(()) => app.system_message(&format!("  [ok] {}", name)),
-                Err(e) => {
-                    app.system_message(&format!("  [error] {}", name));
-                    // Show the error broken into lines so it's readable
-                    for line in e.lines().take(8) {
-                        app.system_message(&format!("    {}", line));
-                    }
-                }
-            }
-        }
-    }
+    // Note: Script autoload is deferred until AFTER the vault is unlocked,
+    // so scripts can call flume.vault.get() at module load time.
+    // See the main loop below.
+    let mut scripts_autoloaded = cli.no_autoload_scripts;
 
     // LLM client — lazily initialized on first /generate use
     let mut llm_client: Option<std::sync::Arc<flume_core::llm::LlmClient>> = None;
@@ -639,6 +605,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tracing::info!("Refreshed script vault secrets after unlock");
                     }
                     script_secrets_refreshed = true;
+                }
+                // Now autoload scripts (deferred until after vault unlock so they can read secrets)
+                if !scripts_autoloaded && (app.vault_unlocked || vault.is_none()) {
+                    if let Some(ref mut mgr) = script_manager {
+                        let results = mgr.load_autoload();
+                        let loaded = results.iter().filter(|(_, r)| r.is_ok()).count();
+                        let failed = results.iter().filter(|(_, r)| r.is_err()).count();
+                        if loaded > 0 || failed > 0 {
+                            app.system_message(&format!("Scripts: {} loaded, {} failed", loaded, failed));
+                            for (name, result) in &results {
+                                match result {
+                                    Ok(()) => {
+                                        tracing::info!("Loaded script: {}", name);
+                                        app.system_message(&format!("  [ok] {}", name));
+                                    }
+                                    Err(e) => {
+                                        let msg = e.to_string();
+                                        tracing::error!("Failed to load script {}: {}", name, msg);
+                                        app.system_message(&format!("  [error] {}", name));
+                                        for line in msg.lines().take(8) {
+                                            app.system_message(&format!("    {}", line));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    scripts_autoloaded = true;
                 }
 
                 // Check if /theme was requested

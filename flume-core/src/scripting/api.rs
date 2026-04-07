@@ -9,6 +9,9 @@ use super::ScriptAction;
 pub(crate) fn register_all(lua: &Lua, state: State) -> LuaResult<()> {
     let flume = lua.create_table()?;
 
+    // Expose Flume version as a string
+    flume.set("version", env!("CARGO_PKG_VERSION"))?;
+
     register_event_api(lua, &flume, Arc::clone(&state))?;
     register_server_api(lua, &flume, Arc::clone(&state))?;
     register_channel_api(lua, &flume, Arc::clone(&state))?;

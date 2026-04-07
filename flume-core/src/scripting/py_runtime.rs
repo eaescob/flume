@@ -249,6 +249,7 @@ class _Vault:
         return _flume_bridge.vault_get(name)
 
 flume_mod = types.ModuleType("flume")
+flume_mod.version = __FLUME_VERSION__
 flume_mod.event = _Event()
 flume_mod.server = _Server()
 flume_mod.channel = _Channel()
@@ -295,9 +296,13 @@ impl PyRuntime {
             let globals = py.import("builtins")?.dict();
             globals.set_item("_flume_bridge", bridge)?;
 
-            // Run bootstrap to set up the flume module
+            // Run bootstrap to set up the flume module (substitute version)
+            let bootstrap = BOOTSTRAP.replace(
+                "__FLUME_VERSION__",
+                &format!("\"{}\"", env!("CARGO_PKG_VERSION")),
+            );
             py.run(
-                std::ffi::CString::new(BOOTSTRAP).unwrap().as_c_str(),
+                std::ffi::CString::new(bootstrap).unwrap().as_c_str(),
                 None,
                 None,
             )?;

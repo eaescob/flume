@@ -326,6 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut autojoin_sent: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut initial_connections_spawned = false;
+    let mut script_secrets_refreshed = vault.is_some();
 
     if app.vault_unlocked && has_servers {
         for name in &servers_to_connect {
@@ -619,12 +620,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     app.mouse_changed = false;
                 }
 
-                // Check if vault was just unlocked — spawn initial connections
+                // Check if vault was just unlocked — spawn connections
                 if app.vault_unlocked && !initial_connections_spawned && has_servers {
                     for name in &servers_to_connect {
                         spawn_connection(name, &flume_config, &vault, &event_collector_tx, &mut app);
                     }
                     initial_connections_spawned = true;
+                }
+                // Refresh script vault secrets the first time the vault becomes unlocked
+                if app.vault_unlocked && !script_secrets_refreshed {
+                    if let (Some(ref mgr), Some(ref v)) = (&script_manager, &vault) {
+                        let secrets: std::collections::HashMap<String, String> = v
+                            .list()
+                            .into_iter()
+                            .filter_map(|name| v.get(name).map(|val| (name.to_string(), val.to_string())))
+                            .collect();
+                        mgr.set_vault_secrets(secrets);
+                        tracing::info!("Refreshed script vault secrets after unlock");
+                    }
+                    script_secrets_refreshed = true;
                 }
 
                 // Check if /theme was requested

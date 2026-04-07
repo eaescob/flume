@@ -400,6 +400,14 @@ impl PyRuntime {
     }
 
     pub fn execute_command(&self, name: &str, args: &str) -> bool {
+        self.execute_command_with_error(name, args).is_some()
+    }
+
+
+
+    /// Execute a command and return Some(Result) if the command exists.
+    /// Returns Some(Ok) on success, Some(Err(msg)) on Python error, None if not found.
+    pub fn execute_command_with_error(&self, name: &str, args: &str) -> Option<Result<(), String>> {
         Python::with_gil(|py| {
             let handler = {
                 self.state
@@ -411,12 +419,17 @@ impl PyRuntime {
             };
 
             if let Some(handler) = handler {
-                if let Err(e) = handler.call1(py, (args,)) {
-                    tracing::warn!("Python command '{}' error: {}", name, e);
+                match handler.call1(py, (args,)) {
+                    Ok(_) => Some(Ok(())),
+                    Err(e) => {
+                        // Format the Python error with traceback
+                        let msg = format_py_error(py, &e);
+                        tracing::warn!("Python command '{}' error: {}", name, msg);
+                        Some(Err(msg))
+                    }
                 }
-                true
             } else {
-                false
+                None
             }
         })
     }
@@ -448,6 +461,23 @@ impl PyRuntime {
             .cloned()
             .collect()
     }
+}
+
+/// Format a Python error with traceback for user display.
+fn format_py_error(py: Python<'_>, err: &PyErr) -> String {
+    // Try to get the traceback
+    let tb = err.traceback(py);
+    let value_str = err.value(py).to_string();
+    let type_name = err.get_type(py).name().map(|s| s.to_string()).unwrap_or_else(|_| "Error".to_string());
+
+    let mut msg = format!("{}: {}", type_name, value_str);
+    if let Some(tb) = tb {
+        if let Ok(formatted) = tb.format() {
+            msg.push('\n');
+            msg.push_str(&formatted);
+        }
+    }
+    msg
 }
 
 #[cfg(test)]

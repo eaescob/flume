@@ -198,13 +198,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Load autoload scripts (unless --no-autoload-scripts)
+    let mut script_load_results: Vec<(String, Result<(), String>)> = Vec::new();
     if !cli.no_autoload_scripts {
         if let Some(ref mut mgr) = script_manager {
             let results = mgr.load_autoload();
             for (name, result) in &results {
                 match result {
-                    Ok(()) => tracing::info!("Loaded script: {}", name),
-                    Err(e) => tracing::error!("Failed to load script {}: {}", name, e),
+                    Ok(()) => {
+                        tracing::info!("Loaded script: {}", name);
+                        script_load_results.push((name.clone(), Ok(())));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load script {}: {}", name, e);
+                        script_load_results.push((name.clone(), Err(e.to_string())));
+                    }
+                }
+            }
+        }
+    }
+
+    // Surface script load results to the global flume buffer
+    let loaded = script_load_results.iter().filter(|(_, r)| r.is_ok()).count();
+    let failed = script_load_results.iter().filter(|(_, r)| r.is_err()).count();
+    if loaded > 0 || failed > 0 {
+        app.system_message(&format!("Scripts: {} loaded, {} failed", loaded, failed));
+        for (name, result) in &script_load_results {
+            match result {
+                Ok(()) => app.system_message(&format!("  ✓ {}", name)),
+                Err(e) => {
+                    app.system_message(&format!("  ✗ {}", name));
+                    // Show the error broken into lines so it's readable
+                    for line in e.lines().take(8) {
+                        app.system_message(&format!("    {}", line));
+                    }
                 }
             }
         }
@@ -1046,8 +1072,17 @@ fn handle_script_command(args: &str, mgr: &mut ScriptManager, app: &mut app::App
             let exec_parts: Vec<&str> = rest.splitn(2, ' ').collect();
             let cmd_name = exec_parts.first().copied().unwrap_or("");
             let cmd_args = exec_parts.get(1).copied().unwrap_or("");
-            if !mgr.execute_command(cmd_name, cmd_args) {
-                app.system_message(&format!("Unknown command: /{}", cmd_name));
+            match mgr.execute_command_with_error(cmd_name, cmd_args) {
+                None => {
+                    app.system_message(&format!("Unknown command: /{}", cmd_name));
+                }
+                Some(Ok(())) => {}
+                Some(Err(msg)) => {
+                    app.system_message(&format!("Script error in /{}:", cmd_name));
+                    for line in msg.lines().take(20) {
+                        app.system_message(&format!("  {}", line));
+                    }
+                }
             }
             // Process any actions the command queued
             process_script_actions(mgr, app);

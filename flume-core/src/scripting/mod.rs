@@ -307,16 +307,23 @@ impl ScriptManager {
 
     /// Execute a custom command (checks Lua first, then Python).
     pub fn execute_command(&self, name: &str, args: &str) -> bool {
-        if self.lua.execute_command(name, args) {
-            return true;
+        self.execute_command_with_error(name, args).is_some()
+    }
+
+    /// Execute a command. Returns Some(Result) if the command exists.
+    pub fn execute_command_with_error(&self, name: &str, args: &str) -> Option<Result<(), String>> {
+        // Try Lua first (existing API only returns bool, so wrap)
+        if self.lua.has_command(name) {
+            self.lua.execute_command(name, args);
+            return Some(Ok(()));
         }
         #[cfg(feature = "python")]
         if let Some(ref py) = self.py {
-            if py.execute_command(name, args) {
-                return true;
+            if let Some(result) = py.execute_command_with_error(name, args) {
+                return Some(result);
             }
         }
-        false
+        None
     }
 
     pub fn has_command(&self, name: &str) -> bool {

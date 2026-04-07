@@ -53,6 +53,12 @@ Event handlers receive a table/dict with the event fields. Call `e:cancel()` (Lu
 - `flume.ui.notify(message, level?)` — Send desktop notification
 - `flume.server.send_raw(server, line)` — Send raw IRC line
 
+### flume.vault — Read-only access to encrypted secrets
+- `flume.vault.get(name)` — Read a secret stored via /secure set. Returns string or nil/None.
+
+### flume.version
+- `flume.version` — String containing the running Flume version (e.g. "1.2.5"). Use for version gating.
+
 {lang_specific}
 
 ## Rules

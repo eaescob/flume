@@ -1487,9 +1487,36 @@ fn process_script_actions(mgr: &ScriptManager, app: &mut app::App) {
                 } else {
                     server
                 };
-                if let Some(ss) = app.servers.get(&srv) {
+                // Resolve empty target to the active buffer on the resolved server
+                let resolved_target = if target.is_empty() {
+                    app.servers.get(&srv)
+                        .map(|ss| ss.active_buffer.clone())
+                        .unwrap_or_default()
+                } else {
+                    target
+                };
+                if resolved_target.is_empty() {
+                    tracing::warn!("Script tried to send message with no target and no active buffer");
+                } else if let Some(ss) = app.servers.get(&srv) {
                     if let Some(tx) = &ss.command_tx {
-                        let _ = tx.try_send(UserCommand::SendMessage { target, text });
+                        let target_clone = resolved_target.clone();
+                        let text_clone = text.clone();
+                        let _ = tx.try_send(UserCommand::SendMessage { target: target_clone, text: text_clone });
+                    }
+                    // Also add to local buffer so user sees it
+                    let nick = ss.nick.clone();
+                    let scrollback = app.scrollback_limit;
+                    if let Some(ss) = app.servers.get_mut(&srv) {
+                        ss.add_message(
+                            &resolved_target,
+                            app::DisplayMessage {
+                                timestamp: chrono::Utc::now(),
+                                source: app::MessageSource::Own(nick),
+                                text,
+                                highlight: false,
+                            },
+                            scrollback,
+                        );
                     }
                 }
             }

@@ -1498,15 +1498,23 @@ fn process_script_actions(mgr: &ScriptManager, app: &mut app::App) {
                 if resolved_target.is_empty() {
                     tracing::warn!("Script tried to send message with no target and no active buffer");
                 } else if let Some(ss) = app.servers.get(&srv) {
+                    let has_echo = ss.has_echo_message;
+                    let nick = ss.nick.clone();
                     if let Some(tx) = &ss.command_tx {
                         let target_clone = resolved_target.clone();
                         let text_clone = text.clone();
                         let _ = tx.try_send(UserCommand::SendMessage { target: target_clone, text: text_clone });
                     }
-                    // Also add to local buffer so user sees it
-                    let nick = ss.nick.clone();
                     let scrollback = app.scrollback_limit;
                     if let Some(ss) = app.servers.get_mut(&srv) {
+                        if has_echo {
+                            // Server will echo the message back — track it for dedup
+                            ss.recent_own_messages.push_back((text.clone(), chrono::Utc::now()));
+                            while ss.recent_own_messages.len() > 32 {
+                                ss.recent_own_messages.pop_front();
+                            }
+                        }
+                        // Always add locally (dedup will skip the echo)
                         ss.add_message(
                             &resolved_target,
                             app::DisplayMessage {

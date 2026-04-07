@@ -16,7 +16,7 @@
         in {
           default = pkgs.rustPlatform.buildRustPackage {
             pname = "flume";
-            version = "1.2.4";
+            version = "1.2.5";
 
             src = self;
 

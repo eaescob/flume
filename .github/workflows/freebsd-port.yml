@@ -84,7 +84,7 @@ jobs:
             echo "Updating bug #${EXISTING}..."
             curl -s -X POST "${BUGZILLA}/bug/${EXISTING}/comment" \
               -H "Content-Type: application/json" \
-              -d "{\"api_key\":\"${API_KEY}\",\"comment\":\"Updated port to version ${VERSION}.\"}"
+              -d "{\"api_key\":\"${API_KEY}\",\"comment\":\"New upstream version ${VERSION} released. Attaching updated git-format patch with the latest source tarball, crate dependencies, and distinfo. This supersedes any previous patch on this bug — please use this latest one for review.\"}"
             curl -s -X POST "${BUGZILLA}/bug/${EXISTING}/attachment" \
               -H "Content-Type: application/json" \
               -d "{\"api_key\":\"${API_KEY}\",\"ids\":[${EXISTING}],\"data\":\"${PATCH_B64}\",\"file_name\":\"flume-port-${VERSION}.patch\",\"summary\":\"git diff for irc/flume ${VERSION}\",\"content_type\":\"text/plain\",\"is_patch\":true}"

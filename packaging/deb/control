@@ -1,5 +1,5 @@
 Package: flume
-Version: 1.2.4
+Version: 1.2.5
 Section: net
 Priority: optional
 Architecture: amd64

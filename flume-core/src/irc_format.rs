@@ -163,13 +163,25 @@ pub fn parse_irc_format(text: &str) -> Vec<FormattedSpan> {
                         if i < len { i += 1; }
                     }
                 } else {
-                    current.push(bytes[i] as char);
-                    i += 1;
+                    // Non-CSI ESC — push as UTF-8
+                    let ch_len = utf8_char_len(bytes[i]);
+                    if i + ch_len <= len {
+                        if let Ok(s) = std::str::from_utf8(&bytes[i..i + ch_len]) {
+                            current.push_str(s);
+                        }
+                    }
+                    i += ch_len;
                 }
             }
             _ => {
-                current.push(bytes[i] as char);
-                i += 1;
+                // Consume a full UTF-8 character (1-4 bytes)
+                let ch_len = utf8_char_len(bytes[i]);
+                if i + ch_len <= len {
+                    if let Ok(s) = std::str::from_utf8(&bytes[i..i + ch_len]) {
+                        current.push_str(s);
+                    }
+                }
+                i += ch_len;
             }
         }
     }
@@ -284,9 +296,14 @@ pub fn strip_formatting(text: &str) -> String {
                     i += 1;
                 }
             }
-            b => {
-                result.push(b as char);
-                i += 1;
+            _ => {
+                let ch_len = utf8_char_len(bytes[i]);
+                if i + ch_len <= len {
+                    if let Ok(s) = std::str::from_utf8(&bytes[i..i + ch_len]) {
+                        result.push_str(s);
+                    }
+                }
+                i += ch_len;
             }
         }
     }
@@ -563,6 +580,17 @@ fn try_parse_color_name(s: &str) -> Option<(u8, usize)> {
         }
     }
     None
+}
+
+/// Determine the length of a UTF-8 character from its first byte.
+fn utf8_char_len(first_byte: u8) -> usize {
+    match first_byte {
+        0..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 1, // invalid leading byte, advance 1
+    }
 }
 
 #[cfg(test)]

@@ -263,6 +263,7 @@ impl NetworkEntry {
             "reconnect_delay_ms" => self.reconnect_delay_ms = value.parse().map_err(|_| "invalid number")?,
             "password" => self.password = Some(value.to_string()),
             "autoconnect" => self.autoconnect = value.parse().map_err(|_| "expected true or false")?,
+            "tls_accept_invalid_certs" | "insecure" => self.tls_accept_invalid_certs = value.parse().map_err(|_| "expected true or false")?,
             "bouncer" => {
                 self.bouncer = match value {
                     "znc" => BouncerType::Znc,

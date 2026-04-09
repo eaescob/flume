@@ -1670,7 +1670,7 @@ fn handle_server_command(args: &str, app: &mut App) {
             // Flags: -tls, -notls, -autoconnect, -username <user>, -password <pass>, -nick <nick>
             if all_args.len() < 3 {
                 app.system_message("Usage: /server add <name> <address> [port] [options]");
-                app.system_message("  Options: -tls -notls -autoconnect");
+                app.system_message("  Options: -tls -notls -insecure -autoconnect");
                 app.system_message("           -username <user> -password <pass> -nick <nick>");
                 return;
             }
@@ -1680,6 +1680,7 @@ fn handle_server_command(args: &str, app: &mut App) {
             let mut port: Option<u16> = None;
             let mut force_tls: Option<bool> = None;
             let mut autoconnect = false;
+            let mut insecure = false;
             let mut username: Option<String> = None;
             let mut password: Option<String> = None;
             let mut nick: Option<String> = None;
@@ -1689,6 +1690,7 @@ fn handle_server_command(args: &str, app: &mut App) {
                 match all_args[i] {
                     "-tls" => force_tls = Some(true),
                     "-notls" => force_tls = Some(false),
+                    "-insecure" | "-accept-invalid-certs" => insecure = true,
                     "-autoconnect" => autoconnect = true,
                     "-username" | "-user" => {
                         i += 1;
@@ -1708,6 +1710,10 @@ fn handle_server_command(args: &str, app: &mut App) {
                             nick = Some(all_args[i].to_string());
                         }
                     }
+                    other if other.starts_with('-') => {
+                        app.system_message(&format!("Unknown option: {}. Valid: -tls -notls -insecure -autoconnect -username -password -nick", other));
+                        return;
+                    }
                     _ => {
                         if port.is_none() {
                             if let Ok(p) = all_args[i].parse::<u16>() {
@@ -1725,6 +1731,7 @@ fn handle_server_command(args: &str, app: &mut App) {
                 entry.tls = tls;
             }
             entry.autoconnect = autoconnect;
+            entry.tls_accept_invalid_certs = insecure;
             entry.username = username;
             entry.password = password;
             entry.nick = nick;

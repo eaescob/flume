@@ -1678,6 +1678,19 @@ impl App {
                             scrollback,
                         );
                     }
+                    Command::Invite { nickname, channel } => {
+                        let from = message.prefix_nick().unwrap_or("???");
+                        ss.add_message(
+                            "",
+                            DisplayMessage {
+                                timestamp,
+                                source: MessageSource::System,
+                                text: format!("{} has invited you to {}", from, channel),
+                                highlight: true,
+                            },
+                            scrollback,
+                        );
+                    }
                     Command::Notice { target, text } => {
                         let nick = message.prefix_nick().unwrap_or("");
                         // Server notices (from server or no nick) go to server buffer

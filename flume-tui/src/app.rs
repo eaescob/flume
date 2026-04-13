@@ -20,6 +20,11 @@ pub struct CompiledSnoticeRule {
 }
 
 /// Compile snotice rule configs into regex-ready rules.
+/// Check if a name is an IRC channel (starts with #, &, +, or !).
+pub fn is_channel(name: &str) -> bool {
+    matches!(name.as_bytes().first(), Some(b'#' | b'&' | b'+' | b'!'))
+}
+
 pub fn compile_snotice_rules(configs: &[flume_core::config::formats::SnoticeRuleConfig]) -> Vec<CompiledSnoticeRule> {
     configs
         .iter()
@@ -263,7 +268,7 @@ impl ServerState {
     /// so we lowercase channel names to avoid duplicate buffers
     /// (e.g., #Rust vs #rust vs #RUST from bouncers).
     pub fn normalize_buffer_name(name: &str) -> String {
-        if name.starts_with('#') || name.starts_with('&') {
+        if is_channel(name) {
             name.to_lowercase()
         } else {
             name.to_string()
@@ -1001,14 +1006,14 @@ impl App {
                         if text.starts_with('\x01') && text.ends_with('\x01') {
                             let inner = &text[1..text.len() - 1];
                             if let Some(action_text) = inner.strip_prefix("ACTION ") {
-                                let buffer_name = if target.starts_with('#') {
+                                let buffer_name = if is_channel(target) {
                                     target.clone()
                                 } else if is_own {
                                     target.clone()
                                 } else {
                                     nick.to_string()
                                 };
-                                let is_pm = !buffer_name.starts_with('#') && !is_own;
+                                let is_pm = !is_channel(&buffer_name) && !is_own;
                                 let highlight = !is_own
                                     && (is_pm || is_highlight(action_text, &our_nick, &highlight_words));
                                 if highlight {
@@ -1081,7 +1086,7 @@ impl App {
                         };
 
                         // Route to channel or PM buffer
-                        let buffer_name = if target.starts_with('#') {
+                        let buffer_name = if is_channel(target) {
                             target.clone()
                         } else if is_own {
                             // Our own PM to someone (echo-message)
@@ -1091,7 +1096,7 @@ impl App {
                             nick.to_string()
                         };
 
-                        let is_pm = !buffer_name.starts_with('#') && !is_own;
+                        let is_pm = !is_channel(&buffer_name) && !is_own;
                         let highlight =
                             !is_own && (is_pm || is_highlight(text, &our_nick, &highlight_words));
                         if highlight {
@@ -1201,7 +1206,7 @@ impl App {
                         // Find channels where this nick was present, remove them, and notify
                         let mut channels_with_nick: Vec<String> = Vec::new();
                         for (buf_name, buf) in &ss.buffers {
-                            if buf_name.starts_with('#') && buf.nicks.iter().any(|cn| cn.nick == nick) {
+                            if is_channel(buf_name) && buf.nicks.iter().any(|cn| cn.nick == nick) {
                                 channels_with_nick.push(buf_name.clone());
                             }
                         }
@@ -1235,7 +1240,7 @@ impl App {
                             .buffers
                             .iter()
                             .filter(|(k, buf)| {
-                                k.starts_with('#') && buf.nicks.iter().any(|cn| cn.nick == old_nick)
+                                is_channel(k) && buf.nicks.iter().any(|cn| cn.nick == old_nick)
                             })
                             .map(|(k, _)| k.clone())
                             .collect();
@@ -1650,7 +1655,7 @@ impl App {
                             }
                         }
 
-                        let buffer_name = if target.starts_with('#') {
+                        let buffer_name = if is_channel(target) {
                             target.clone()
                         } else {
                             String::new()
@@ -1783,7 +1788,7 @@ impl App {
                             }
                         } else {
                             // User notice
-                            let buffer = if target.starts_with('#') {
+                            let buffer = if is_channel(target) {
                                 target.clone()
                             } else {
                                 String::new()

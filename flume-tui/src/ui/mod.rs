@@ -44,7 +44,7 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let show_buffer_list = app.active_server_state().is_some();
     let show_nick_list = app
         .active_server_state()
-        .map(|ss| ss.active_buffer.starts_with('#') && !ss.active_buf().nicks.is_empty())
+        .map(|ss| crate::app::is_channel(&ss.active_buffer) && !ss.active_buf().nicks.is_empty())
         .unwrap_or(false);
 
     // Build horizontal columns for main area

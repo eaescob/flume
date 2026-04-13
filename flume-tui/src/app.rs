@@ -1693,6 +1693,29 @@ impl App {
                     }
                     Command::Notice { target, text } => {
                         let nick = message.prefix_nick().unwrap_or("");
+
+                        // CTCP replies arrive as NOTICE with \x01 wrappers
+                        if text.starts_with('\x01') && text.ends_with('\x01') {
+                            let inner = &text[1..text.len() - 1];
+                            let ctcp_cmd = inner.split(' ').next().unwrap_or(inner);
+                            let ctcp_result = inner.strip_prefix(ctcp_cmd).unwrap_or("").trim();
+                            ss.add_message(
+                                "",
+                                DisplayMessage {
+                                    timestamp,
+                                    source: MessageSource::Server,
+                                    text: if ctcp_result.is_empty() {
+                                        format!("[ctcp reply] {} from {}", ctcp_cmd, nick)
+                                    } else {
+                                        format!("[ctcp reply] {} from {}: {}", ctcp_cmd, nick, ctcp_result)
+                                    },
+                                    highlight: false,
+                                },
+                                scrollback,
+                            );
+                            return notifications;
+                        }
+
                         // Server notices (from server or no nick) go to server buffer
                         // User notices go to the appropriate buffer
                         if nick.is_empty() || nick.contains('.') || *target == "*" {

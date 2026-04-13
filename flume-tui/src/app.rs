@@ -1699,16 +1699,30 @@ impl App {
                             let inner = &text[1..text.len() - 1];
                             let ctcp_cmd = inner.split(' ').next().unwrap_or(inner);
                             let ctcp_result = inner.strip_prefix(ctcp_cmd).unwrap_or("").trim();
+                            let display_text = if ctcp_cmd.eq_ignore_ascii_case("PING") {
+                                // Calculate round-trip time from the timestamp
+                                if let Ok(sent_ts) = ctcp_result.parse::<i64>() {
+                                    let now_ts = chrono::Utc::now().timestamp();
+                                    let rtt_secs = now_ts - sent_ts;
+                                    if rtt_secs >= 0 {
+                                        format!("[ctcp] PING reply from {}: {}s", nick, rtt_secs)
+                                    } else {
+                                        format!("[ctcp] PING reply from {}: {}", nick, ctcp_result)
+                                    }
+                                } else {
+                                    format!("[ctcp] PING reply from {}: {}", nick, ctcp_result)
+                                }
+                            } else if ctcp_result.is_empty() {
+                                format!("[ctcp] {} reply from {}", ctcp_cmd, nick)
+                            } else {
+                                format!("[ctcp] {} reply from {}: {}", ctcp_cmd, nick, ctcp_result)
+                            };
                             ss.add_message(
                                 "",
                                 DisplayMessage {
                                     timestamp,
                                     source: MessageSource::Server,
-                                    text: if ctcp_result.is_empty() {
-                                        format!("[ctcp reply] {} from {}", ctcp_cmd, nick)
-                                    } else {
-                                        format!("[ctcp reply] {} from {}: {}", ctcp_cmd, nick, ctcp_result)
-                                    },
+                                    text: display_text,
                                     highlight: false,
                                 },
                                 scrollback,

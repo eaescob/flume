@@ -15,13 +15,8 @@ echo "Building flume v${VERSION} .deb package (${ARCH})..."
 
 # Build the binary if not already built (CI pre-builds it)
 if [ ! -f target/release/flume ]; then
-  FEATURES=""
-  if python3 -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null; then
-    echo "Python detected, enabling python feature"
-    FEATURES="--features python"
-    export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
-  fi
-  cargo build --release -p flume-tui $FEATURES
+  export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+  cargo build --release -p flume-tui --features python
 fi
 
 # Create package structure

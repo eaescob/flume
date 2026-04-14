@@ -25,6 +25,9 @@
             };
 
             cargoBuildFlags = [ "-p" "flume-tui" ];
+            buildFeatures = [ "python" ];
+
+            buildInputs = [ pkgs.python3 ];
 
             env = {
               PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1";

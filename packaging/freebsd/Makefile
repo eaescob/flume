@@ -10,14 +10,15 @@ WWW=		https://github.com/FlumeIRC/flume
 LICENSE=	APACHE20
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
-USES=		cargo
+USES=		cargo python:3.7+
 USE_GITHUB=	yes
 GH_ACCOUNT=	FlumeIRC
 
 .include "${.CURDIR}/Makefile.crates"
 
-CARGO_BUILD_ARGS=	-p flume-tui
+CARGO_BUILD_ARGS=	-p flume-tui --features python
 CARGO_INSTALL_PATH=	flume-tui
+CARGO_ENV=	PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 PLIST_FILES=	bin/flume \
 		share/man/man1/flume.1.gz

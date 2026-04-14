@@ -11,4 +11,4 @@ Description: Modern terminal IRC client
  split views, vi/emacs keybinding modes, Lua and Python scripting,
  LLM-powered script and theme generation, DCC file transfers,
  XDCC, emoji shortcodes, and configurable display formats.
-Depends: libc6 (>= 2.17)
+Depends: libc6 (>= 2.17), python3

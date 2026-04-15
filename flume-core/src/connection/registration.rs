@@ -50,15 +50,23 @@ pub async fn perform_registration<R: tokio::io::AsyncRead + Unpin>(
     realname: &str,
     auth: &AuthConfig,
     server_password: Option<&str>,
+    pass_username: Option<&str>,
     event_tx: &tokio::sync::mpsc::UnboundedSender<IrcEvent>,
     server_name: &str,
 ) -> Result<RegistrationResult, ConnectionError> {
     let mut capabilities = std::collections::HashSet::new();
     let mut confirmed_nick = nick.to_string();
 
-    // Send server password if configured
+    // Send server password if configured.
+    // When an explicit identity username is set alongside a server password,
+    // combine them as "username:password" in the PASS command. This is
+    // required for ZNC and other bouncers that authenticate via PASS.
     if let Some(pass) = server_password {
-        send(write_tx, &format!("PASS :{}", pass)).await?;
+        if let Some(pu) = pass_username {
+            send(write_tx, &format!("PASS {}:{}", pu, pass)).await?;
+        } else {
+            send(write_tx, &format!("PASS :{}", pass)).await?;
+        }
     }
 
     // Send CAP LS + NICK + USER simultaneously
@@ -218,6 +226,25 @@ pub async fn perform_registration<R: tokio::io::AsyncRead + Unpin>(
                     }
                     _ => {}
                 }
+            }
+
+            // Forward NOTICE and ERROR messages to the UI during registration
+            Command::Notice { text, .. } => {
+                let _ = event_tx.send(IrcEvent::MessageReceived {
+                    server_name: server_name.to_string(),
+                    message: message.clone(),
+                });
+                tracing::info!("[{}] Registration notice: {}", server_name, text);
+            }
+
+            Command::Raw { command, params } if command == "ERROR" => {
+                let reason = params.first().cloned().unwrap_or_default();
+                let _ = event_tx.send(IrcEvent::Error {
+                    server_name: server_name.to_string(),
+                    error: reason.clone(),
+                });
+                tracing::error!("[{}] Server ERROR during registration: {}", server_name, reason);
+                return Err(ConnectionError::Registration(reason));
             }
 
             _ => {}

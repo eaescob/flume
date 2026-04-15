@@ -188,6 +188,14 @@ impl ServerConnection {
             .as_deref()
             .map(|p| resolve_secrets(p, self.vault.as_ref()));
 
+        // If an explicit identity username is set, pass it for PASS command
+        // so bouncers (ZNC etc.) get "username:password" in PASS.
+        let pass_username = self
+            .server_config
+            .identity
+            .username
+            .as_deref();
+
         // Registration
         let result = registration::perform_registration(
             &write_tx,
@@ -197,6 +205,7 @@ impl ServerConnection {
             realname,
             &auth,
             server_password.as_deref(),
+            pass_username,
             &self.event_tx,
             &server_name,
         )

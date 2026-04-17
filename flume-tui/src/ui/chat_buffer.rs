@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use flume_core::irc_format::{self, FormattedSpan};
+use crate::app::ChannelNick;
 
 use crate::app::{App, DisplayMessage, MessageSource};
 use crate::theme::Theme;
@@ -59,11 +60,12 @@ use crate::url;
 pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let messages = app.active_messages();
     let scroll_offset = app.active_scroll_offset();
+    let nicks = app.active_nicks();
     let search = app
         .active_server_state()
         .and_then(|ss| ss.active_buf().search.as_deref());
 
-    render_buffer(frame, area, messages, scroll_offset, search, &app.timestamp_format, theme);
+    render_buffer(frame, area, messages, scroll_offset, search, &app.timestamp_format, nicks, theme);
 }
 
 /// Render any buffer's messages into the given area.
@@ -75,6 +77,7 @@ pub fn render_buffer(
     scroll_offset: usize,
     search: Option<&str>,
     timestamp_format: &str,
+    nicks: &[ChannelNick],
     theme: &Theme,
 ) {
     let total = messages.len();
@@ -93,7 +96,7 @@ pub fn render_buffer(
     // Art is detected by the presence of background color codes (\x03FG,BG).
     let mut visual_lines: Vec<Line> = Vec::new();
     for msg in messages.iter().skip(start).take(end - start) {
-        let line = format_message(msg, timestamp_format, search, theme);
+        let line = format_message(msg, timestamp_format, search, nicks, theme);
         let is_art = has_background_colors(&msg.text);
 
         if is_art || width == 0 {
@@ -283,10 +286,30 @@ fn wrap_line<'a>(line: &Line<'a>, width: usize) -> Vec<Line<'a>> {
     result
 }
 
+/// Return the highest-priority prefix symbol for a nick.
+/// Priority: ~ (owner) > & (admin) > @ (op) > % (halfop) > + (voice)
+fn nick_prefix(nick: &str, nicks: &[ChannelNick]) -> &'static str {
+    const ORDER: &[(char, &str)] = &[
+        ('~', "~"),
+        ('&', "&"),
+        ('@', "@"),
+        ('%', "%"),
+        ('+', "+"),
+    ];
+    nicks
+        .iter()
+        .find(|cn| cn.nick == nick)
+        .and_then(|cn| {
+            ORDER.iter().find(|(c, _)| cn.prefix.contains(*c)).map(|(_, s)| *s)
+        })
+        .unwrap_or("")
+}
+
 fn format_message<'a>(
     msg: &DisplayMessage,
     timestamp_format: &str,
     search: Option<&str>,
+    nicks: &[ChannelNick],
     theme: &Theme,
 ) -> Line<'a> {
     let ts = msg.timestamp.format(timestamp_format).to_string();
@@ -304,20 +327,22 @@ fn format_message<'a>(
 
     match &msg.source {
         MessageSource::User(nick) => {
+            let prefix = nick_prefix(nick, nicks);
             let nick_color = theme.nick_color(nick);
             let base = Style::default().fg(theme.chat_message);
             let mut spans = vec![
                 Span::styled(format!("[{}] ", ts), Style::default().fg(theme.chat_timestamp)),
-                Span::styled(format!("<{}> ", nick), Style::default().fg(nick_color)),
+                Span::styled(format!("<{}{}> ", prefix, nick), Style::default().fg(nick_color)),
             ];
             spans.extend(styled_text_spans(&msg.text, base, url_style, msg.highlight, highlight_style, search_style));
             Line::from(spans)
         }
         MessageSource::Own(nick) => {
+            let prefix = nick_prefix(nick, nicks);
             let base = Style::default().fg(theme.chat_message);
             let mut spans = vec![
                 Span::styled(format!("[{}] ", ts), Style::default().fg(theme.chat_timestamp)),
-                Span::styled(format!("<{}> ", nick), Style::default().fg(theme.chat_own_nick)),
+                Span::styled(format!("<{}{}> ", prefix, nick), Style::default().fg(theme.chat_own_nick)),
             ];
             spans.extend(styled_text_spans(&msg.text, base, url_style, false, highlight_style, search_style));
             Line::from(spans)

@@ -157,7 +157,8 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
                 let messages = app.split_messages().unwrap_or(&empty);
                 let scroll = app.split_scroll_offset();
                 let search = app.split_search();
-                chat_buffer::render_buffer(frame, secondary_parts[1], messages, scroll, search, &app.timestamp_format, theme);
+                let nicks = app.split_nicks();
+                chat_buffer::render_buffer(frame, secondary_parts[1], messages, scroll, search, &app.timestamp_format, nicks, theme);
             }
             SplitDirection::Horizontal => {
                 // Stacked: [primary / separator / secondary]
@@ -181,7 +182,8 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
                 let messages = app.split_messages().unwrap_or(&empty);
                 let scroll = app.split_scroll_offset();
                 let search = app.split_search();
-                chat_buffer::render_buffer(frame, vert[2], messages, scroll, search, &app.timestamp_format, theme);
+                let nicks = app.split_nicks();
+                chat_buffer::render_buffer(frame, vert[2], messages, scroll, search, &app.timestamp_format, nicks, theme);
             }
         }
     } else {

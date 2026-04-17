@@ -693,6 +693,12 @@ impl App {
             .unwrap_or(&self.global_messages)
     }
 
+    pub fn active_nicks(&self) -> &[ChannelNick] {
+        self.active_server_state()
+            .map(|s| s.active_buf().nicks.as_slice())
+            .unwrap_or(&[])
+    }
+
     pub fn active_scroll_offset(&self) -> usize {
         self.active_server_state()
             .map(|s| s.active_buf().scroll_offset)
@@ -824,6 +830,15 @@ impl App {
         let split = self.split.as_ref()?;
         let ss = self.servers.get(&split.secondary_server)?;
         ss.buffers.get(&split.secondary_buffer)?.search.as_deref()
+    }
+
+    pub fn split_nicks(&self) -> &[ChannelNick] {
+        self.split
+            .as_ref()
+            .and_then(|s| self.servers.get(&s.secondary_server))
+            .and_then(|ss| ss.buffers.get(&ss.active_buffer))
+            .map(|b| b.nicks.as_slice())
+            .unwrap_or(&[])
     }
 
     // --- Message helpers ---
@@ -1655,6 +1670,16 @@ impl App {
                             }
                         }
 
+                        // Update channel nick prefixes for mode changes
+                        if is_channel(target) {
+                            if let Some(m) = modes {
+                                let key = ServerState::normalize_buffer_name(target);
+                                if let Some(buf) = ss.buffers.get_mut(&key) {
+                                    apply_channel_nick_modes(buf, m, params);
+                                }
+                            }
+                        }
+
                         let buffer_name = if is_channel(target) {
                             target.clone()
                         } else {
@@ -1874,4 +1899,54 @@ fn apply_user_modes(current: &mut String, mode_str: &str) {
         sorted.sort();
         *current = format!("+{}", sorted.into_iter().collect::<String>());
     }
+}
+
+/// Map channel mode letters to their prefix symbols.
+fn mode_to_prefix(mode: char) -> Option<char> {
+    match mode {
+        'o' => Some('@'),
+        'v' => Some('+'),
+        'h' => Some('%'),
+        'q' => Some('~'),
+        'a' => Some('&'),
+        _ => None,
+    }
+}
+
+/// Apply channel mode changes (e.g. +o nick, -v nick) to the nick list.
+fn apply_channel_nick_modes(buf: &mut Buffer, mode_str: &str, params: &[String]) {
+    let mut adding = true;
+    let mut param_idx = 0;
+
+    for c in mode_str.chars() {
+        match c {
+            '+' => adding = true,
+            '-' => adding = false,
+            _ => {
+                if let Some(prefix_char) = mode_to_prefix(c) {
+                    if let Some(target_nick) = params.get(param_idx) {
+                        if let Some(cn) = buf.nicks.iter_mut().find(|n| n.nick == *target_nick) {
+                            if adding {
+                                if !cn.prefix.contains(prefix_char) {
+                                    cn.prefix.push(prefix_char);
+                                }
+                            } else {
+                                cn.prefix = cn.prefix.replace(prefix_char, "");
+                            }
+                        }
+                        param_idx += 1;
+                    }
+                } else {
+                    // Non-prefix modes that take a parameter (b, k, l, etc.)
+                    match c {
+                        'b' | 'e' | 'I' | 'k' => { param_idx += 1; }
+                        'l' if adding => { param_idx += 1; }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    buf.sort_nicks();
 }

@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     )));
 
     // Buffer list — sorted alphabetically with group entries
-    let sorted_buffers = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref());
+    let sorted_buffers = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref(), &app.snotice_buffer_names());
 
     for (visual_idx, buf_name) in sorted_buffers.iter().enumerate() {
         let idx = visual_idx + 1;

@@ -219,7 +219,7 @@ async fn execute_action(
         InputAction::BufferJump(n) => {
             let idx = (n as usize) - 1;
             if let Some(ss) = app.active_server_state() {
-                let sorted = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref());
+                let sorted = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref(), &app.snotice_buffer_names());
                 if let Some(name) = sorted.get(idx).cloned() {
                     switch_to_buffer_or_group(app, &name);
                 }
@@ -1097,7 +1097,7 @@ async fn process_input(
                     if num == 0 {
                         app.system_message("Window numbers start at 1");
                     } else if let Some(ss) = app.active_server_state() {
-                        let sorted = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref());
+                        let sorted = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref(), &app.snotice_buffer_names());
                         let idx = num - 1;
                         if let Some(name) = sorted.get(idx).cloned() {
                             switch_to_buffer_or_group(app, &name);
@@ -2771,7 +2771,7 @@ fn handle_mouse_event(app: &mut App, event: crossterm::event::MouseEvent) {
                     app.viewing_global = false;
                     let buf_idx = rel_y - 2;
                     if let Some(ss) = app.active_server_state() {
-                        let sorted = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref());
+                        let sorted = ss.sorted_buffers_with_groups(&app.active_groups(), app.active_group.as_deref(), &app.snotice_buffer_names());
                         if let Some(name) = sorted.get(buf_idx).cloned() {
                             switch_to_buffer_or_group(app, &name);
                         }

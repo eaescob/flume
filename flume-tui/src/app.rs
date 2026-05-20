@@ -39,6 +39,18 @@ pub fn compile_snotice_rules(configs: &[flume_core::config::formats::SnoticeRule
         .collect()
 }
 
+/// Sidebar tier for a buffer name: server (0) < snotice (1) < everything else (2).
+/// Within a tier, buffers are then sorted alphabetically.
+pub fn buffer_sort_tier(name: &str, snotice_buffers: &std::collections::HashSet<String>) -> u8 {
+    if name.is_empty() {
+        0
+    } else if snotice_buffers.contains(name) {
+        1
+    } else {
+        2
+    }
+}
+
 use flume_core::dcc::{DccTransfer, DccTransferState};
 
 use crate::split::{SplitDirection, SplitState};
@@ -320,9 +332,15 @@ impl ServerState {
     }
 
     /// Return buffer names sorted the same way they display in the sidebar:
-    /// server buffer first, then alphabetical (case-insensitive).
+    /// server buffer first, then snotice-routed buffers (alphabetical),
+    /// then channels/PMs/groups (alphabetical, case-insensitive).
     /// When groups are active, group names replace their member channels.
-    pub fn sorted_buffers_with_groups(&self, groups: &HashMap<String, BufferGroup>, active_group: Option<&str>) -> Vec<String> {
+    pub fn sorted_buffers_with_groups(
+        &self,
+        groups: &HashMap<String, BufferGroup>,
+        active_group: Option<&str>,
+        snotice_buffers: &std::collections::HashSet<String>,
+    ) -> Vec<String> {
         // Collect channels that are part of the active group (to exclude individually)
         let grouped_channels: std::collections::HashSet<String> = groups.values()
             .flat_map(|g| g.channels.iter().map(|c| c.to_lowercase()))
@@ -339,20 +357,20 @@ impl ServerState {
         }
 
         sorted.sort_by(|a, b| {
-            if a.is_empty() { return std::cmp::Ordering::Less; }
-            if b.is_empty() { return std::cmp::Ordering::Greater; }
-            a.to_lowercase().cmp(&b.to_lowercase())
+            buffer_sort_tier(a, snotice_buffers)
+                .cmp(&buffer_sort_tier(b, snotice_buffers))
+                .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
         });
         sorted
     }
 
     /// Return buffer names sorted (without group logic, used by Alt+num etc).
-    pub fn sorted_buffers(&self) -> Vec<String> {
+    pub fn sorted_buffers(&self, snotice_buffers: &std::collections::HashSet<String>) -> Vec<String> {
         let mut sorted: Vec<String> = self.buffer_order.clone();
         sorted.sort_by(|a, b| {
-            if a.is_empty() { return std::cmp::Ordering::Less; }
-            if b.is_empty() { return std::cmp::Ordering::Greater; }
-            a.to_lowercase().cmp(&b.to_lowercase())
+            buffer_sort_tier(a, snotice_buffers)
+                .cmp(&buffer_sort_tier(b, snotice_buffers))
+                .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
         });
         sorted
     }
@@ -630,6 +648,17 @@ impl App {
         self.groups.iter()
             .filter(|(_, g)| g.server == server)
             .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Names of all buffers referenced by configured snotice routing rules.
+    /// Used to keep these buffers grouped together below the server buffer and
+    /// above channels/PMs in the sidebar.
+    pub fn snotice_buffer_names(&self) -> std::collections::HashSet<String> {
+        self.snotice_configs.iter()
+            .filter_map(|c| c.buffer.as_deref())
+            .filter(|b| !b.is_empty())
+            .map(ServerState::normalize_buffer_name)
             .collect()
     }
 
@@ -1978,4 +2007,54 @@ fn apply_channel_nick_modes(buf: &mut Buffer, mode_str: &str, params: &[String])
     }
 
     buf.sort_nicks();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn sorted_buffers_with_groups_orders_server_then_snotice_then_others() {
+        let mut ss = ServerState::new("libera", "tester");
+        // Channel, PM, and two snotice buffers
+        ss.ensure_buffer("#zulu");
+        ss.ensure_buffer("#alpha");
+        ss.ensure_buffer("alice");
+        ss.ensure_buffer("snotice-connections");
+        ss.ensure_buffer("snotice-opers");
+
+        let mut snotice = HashSet::new();
+        snotice.insert("snotice-connections".to_string());
+        snotice.insert("snotice-opers".to_string());
+
+        let sorted = ss.sorted_buffers_with_groups(&HashMap::new(), None, &snotice);
+
+        assert_eq!(
+            sorted,
+            vec![
+                "".to_string(),                       // server
+                "snotice-connections".to_string(),    // snotice tier, alphabetical
+                "snotice-opers".to_string(),
+                "#alpha".to_string(),                 // others tier, alphabetical
+                "#zulu".to_string(),
+                "alice".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sorted_buffers_with_groups_no_snotice_falls_back_to_alpha() {
+        let mut ss = ServerState::new("libera", "tester");
+        ss.ensure_buffer("#zulu");
+        ss.ensure_buffer("#alpha");
+        ss.ensure_buffer("bob");
+
+        let sorted = ss.sorted_buffers_with_groups(&HashMap::new(), None, &HashSet::new());
+
+        assert_eq!(
+            sorted,
+            vec!["".to_string(), "#alpha".to_string(), "#zulu".to_string(), "bob".to_string()]
+        );
+    }
 }

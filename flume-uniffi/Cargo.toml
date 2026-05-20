@@ -1,0 +1,22 @@
+[package]
+name = "flume-uniffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "flume_uniffi"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+uniffi = { version = "0.28", features = ["tokio", "cli"] }
+tokio = { workspace = true }
+flume-core = { path = "../flume-core", default-features = false }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

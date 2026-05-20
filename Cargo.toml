@@ -1,5 +1,9 @@
 [workspace]
-members = ["flume-core", "flume-tui"]
+members = ["flume-core", "flume-tui", "flume-uniffi"]
+# flume-uniffi is excluded from default builds so the existing TUI dev loop
+# stays untouched. Build it explicitly with `-p flume-uniffi` or via the
+# xcframework script.
+default-members = ["flume-core", "flume-tui"]
 resolver = "2"
 
 [workspace.package]

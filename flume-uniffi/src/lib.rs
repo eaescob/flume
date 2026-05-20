@@ -28,10 +28,20 @@ pub use vault::VaultStatus;
 
 use std::sync::{Mutex, Once};
 
+use flume_core::config::vault::Vault;
+
+/// Aggregated mutable state. One mutex covers all of it — contention is
+/// negligible because Swift callers operate sequentially per session.
+pub(crate) struct ClientState {
+    pub(crate) callback: Option<Box<dyn EventCallback>>,
+    pub(crate) vault: Option<Vault>,
+}
+
 #[derive(uniffi::Object)]
 pub struct FlumeClient {
+    #[allow(dead_code)] // consumed in M3 once connections spawn tasks
     runtime: tokio::runtime::Runtime,
-    callback: Mutex<Option<Box<dyn EventCallback>>>,
+    pub(crate) state: Mutex<ClientState>,
 }
 
 #[uniffi::export]
@@ -46,14 +56,17 @@ impl FlumeClient {
             .expect("failed to build tokio runtime");
         std::sync::Arc::new(Self {
             runtime,
-            callback: Mutex::new(None),
+            state: Mutex::new(ClientState {
+                callback: None,
+                vault: None,
+            }),
         })
     }
 
     /// Register the callback that receives all events from all connected
     /// servers. Replaces any previous callback. Called once at app startup.
     pub fn set_event_callback(&self, callback: Box<dyn EventCallback>) {
-        *self.callback.lock().expect("callback mutex poisoned") = Some(callback);
+        self.state.lock().expect("state poisoned").callback = Some(callback);
     }
 }
 
@@ -77,10 +90,3 @@ fn init_tracing() {
     });
 }
 
-/// Suppress unused-import warnings while the rest of the surface is still
-/// stubs. Future milestones consume `runtime` and `callback` directly.
-#[allow(dead_code)]
-fn _internal_use(client: &FlumeClient) {
-    let _ = &client.runtime;
-    let _ = &client.callback;
-}

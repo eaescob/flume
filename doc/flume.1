@@ -1,4 +1,4 @@
-.TH FLUME 1 "2026-04-02" "Flume 1.2.5" "User Commands"
+.TH FLUME 1 "2026-05-19" "Flume 1.2.6" "User Commands"
 .SH NAME
 flume \- modern terminal IRC client
 .SH SYNOPSIS
@@ -29,6 +29,29 @@ Send an action.
 .TP
 .B /nick \fInick\fR
 Change nickname.
+.TP
+.B /invite \fInick\fR [\fIchannel\fR]
+Invite a user to a channel.
+.TP
+.B /whois \fInick\fR
+Query detailed user information. Output is routed to an existing PM
+buffer for the nick when one is open; otherwise to the server buffer.
+Set
+.B general.auto_whois_on_pm
+to automatically /whois nicks that PM you for the first time.
+.TP
+.B /ctcp \fInick\fR \fIcommand\fR
+Send a CTCP request (VERSION, PING, TIME, etc.). Replies are displayed
+inline; PING replies show round-trip latency.
+.TP
+.B /ping \fInick\fR
+Shortcut for a CTCP PING.
+.TP
+.B /quote \fIraw line\fR
+Send a raw IRC protocol line.
+.TP
+.B /oper \fIusername\fR \fIpassword\fR
+Authenticate as an IRC operator.
 .TP
 .B /quit [\fImessage\fR]
 Quit Flume.
@@ -66,8 +89,24 @@ Load a Lua or Python script.
 .B /script unload \fIname\fR
 Unload a script.
 .TP
+.B /script reload \fIname\fR
+Reload a script from disk.
+.TP
 .B /script list
-List loaded scripts.
+List loaded scripts with versions.
+.TP
+.B /script search \fIquery\fR
+Search the script registry (scripts.flumeirc.io) by name, description,
+or tag.
+.TP
+.B /script install \fIname\fR
+Download a script from the registry and auto-load it.
+.TP
+.B /script update [\fIname\fR]
+Update one or all installed registry scripts.
+.TP
+.B /script info \fIname\fR
+Show details for a script in the registry.
 .SS Generation (LLM)
 .TP
 .B /generate script \fIdescription\fR
@@ -93,8 +132,12 @@ Send a file via DCC.
 Request an XDCC pack.
 .SS Server Management
 .TP
-.B /server add \fIname\fR \fIaddress\fR [\fIport\fR] [\fI-tls|-notls\fR] [\fI-autoconnect\fR]
-Add a network.
+.B /server add \fIname\fR \fIaddress\fR [\fIport\fR] [\fI-tls|-notls\fR] [\fI-insecure\fR] [\fI-autoconnect\fR] [\fI-username\fR \fIu\fR] [\fI-password\fR \fIp\fR] [\fI-nick\fR \fIn\fR]
+Add a network. TLS is enabled by default for all ports; pass
+.B -notls
+for plaintext or
+.B -insecure
+to accept invalid/self-signed certificates.
 .TP
 .B /server list
 List configured networks.
@@ -108,6 +151,15 @@ Store a secret in the vault.
 .TP
 .B /secure list
 List stored secrets.
+.SS Themes
+.TP
+.B /theme [\fIname\fR|reload|path]
+List, switch, or reload themes.
+.TP
+.B /theme import \fIurl\fR
+Import a theme from a GitHub repository (Omarchy-compatible color
+schemes) and generate both solid and transparent variants in
+.IR ~/.local/share/flume/themes/ .
 .SH KEYBINDINGS
 .TP
 .B Ctrl+C

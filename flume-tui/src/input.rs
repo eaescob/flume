@@ -1919,7 +1919,7 @@ fn show_help(app: &mut App) {
     app.system_message("    /disconnect              — Disconnect active server");
     app.system_message("    /quit [message]          — Quit Flume");
     app.system_message("  Server management:");
-    app.system_message("    /server add <name> <addr> [port] [-tls] [-autoconnect] [-username <u>] [-password <p>]");
+    app.system_message("    /server add <name> <addr> [port] [-tls|-notls] [-insecure] [-autoconnect] [-username <u>] [-password <p>]");
     app.system_message("    /server remove <name>    — Remove a network");
     app.system_message("    /server list             — List configured networks");
     app.system_message("    /server set <n> <k> <v>  — Set a network field");
@@ -2118,7 +2118,9 @@ fn show_help_topic(topic: &str, app: &mut App) {
         "server" => {
             app.system_message("/server add|remove|list|set|connect|switch [args]");
             app.system_message("  Manage IRC network configurations.");
-            app.system_message("  add <name> <addr> [port] [-tls|-notls] [-autoconnect] [-username <u>] [-password <p>] [-nick <n>]");
+            app.system_message("  add <name> <addr> [port] [-tls|-notls] [-insecure] [-autoconnect] [-username <u>] [-password <p>] [-nick <n>]");
+            app.system_message("    -tls/-notls force TLS on/off (default: on for all ports)");
+            app.system_message("    -insecure accept invalid/self-signed certificates");
             app.system_message("  remove <name>    — remove a network");
             app.system_message("  list             — list configured networks");
             app.system_message("  set <n> <k> <v>  — set a network field");

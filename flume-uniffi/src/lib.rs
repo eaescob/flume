@@ -26,21 +26,26 @@ pub use servers::{
 pub use snotice::SnoticeRule;
 pub use vault::VaultStatus;
 
+use std::collections::HashMap;
 use std::sync::{Mutex, Once};
 
+use flume_core::config::server::IrcConfig;
 use flume_core::config::vault::Vault;
+
+use crate::servers::ServerHandle;
 
 /// Aggregated mutable state. One mutex covers all of it — contention is
 /// negligible because Swift callers operate sequentially per session.
 pub(crate) struct ClientState {
     pub(crate) callback: Option<Box<dyn EventCallback>>,
     pub(crate) vault: Option<Vault>,
+    pub(crate) irc_config: IrcConfig,
+    pub(crate) servers: HashMap<String, ServerHandle>,
 }
 
 #[derive(uniffi::Object)]
 pub struct FlumeClient {
-    #[allow(dead_code)] // consumed in M3 once connections spawn tasks
-    runtime: tokio::runtime::Runtime,
+    pub(crate) runtime: tokio::runtime::Runtime,
     pub(crate) state: Mutex<ClientState>,
 }
 
@@ -54,11 +59,21 @@ impl FlumeClient {
             .thread_name("flume-uniffi")
             .build()
             .expect("failed to build tokio runtime");
+
+        // Load irc.toml on startup so list_networks() reflects disk state
+        // before the Swift app calls anything else. Vault loads lazily on
+        // first unlock; servers HashMap starts empty.
+        let irc_config = paths::irc_config_path()
+            .and_then(|p| servers::load_irc_config_from(&p).ok())
+            .unwrap_or_default();
+
         std::sync::Arc::new(Self {
             runtime,
             state: Mutex::new(ClientState {
                 callback: None,
                 vault: None,
+                irc_config,
+                servers: HashMap::new(),
             }),
         })
     }

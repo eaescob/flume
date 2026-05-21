@@ -13,8 +13,10 @@ use flume_core::config::server::{
     self as core_server, IrcConfig, NetworkEntry, ServerConfig,
 };
 use flume_core::connection::ServerConnection;
-use flume_core::event::{ConnectionState as CoreConnectionState, IrcEvent, UserCommand};
+use flume_core::event::{IrcEvent, UserCommand};
 
+use crate::buffers::ServerBuffers;
+use crate::dispatch::ServerDispatcher;
 use crate::{error::FlumeError, paths, FlumeClient};
 
 // ───────────────────────── public FFI types ─────────────────────────
@@ -87,6 +89,7 @@ pub(crate) struct ServerSnapshot {
 
 pub(crate) struct ServerHandle {
     pub snapshot: Arc<Mutex<ServerSnapshot>>,
+    pub buffers: Arc<Mutex<ServerBuffers>>,
     /// Used in M5 (commands) to push UserCommand::SendMessage / Join / etc.
     /// Kept here so the per-server tx is reachable from the FFI command surface.
     #[allow(dead_code)]
@@ -184,15 +187,6 @@ pub(crate) fn network_config_from_entry(e: &NetworkEntry) -> NetworkConfig {
         autoconnect: e.autoconnect,
         bouncer: bouncer_from_core(&e.bouncer),
         password: e.password.clone(),
-    }
-}
-
-fn core_state_to_ffi(s: &CoreConnectionState) -> ConnectionState {
-    match s {
-        CoreConnectionState::Disconnected => ConnectionState::Disconnected,
-        CoreConnectionState::Connecting => ConnectionState::Connecting,
-        CoreConnectionState::Registering => ConnectionState::Registering,
-        CoreConnectionState::Connected => ConnectionState::Connected,
     }
 }
 
@@ -311,8 +305,16 @@ impl FlumeClient {
             user_modes: String::new(),
             capabilities: Vec::new(),
         }));
+        let buffers = Arc::new(Mutex::new(ServerBuffers::default()));
+        let callback = state.callback.clone();
 
-        let snapshot_task = Arc::clone(&snapshot);
+        let dispatcher = ServerDispatcher {
+            server_name: name.clone(),
+            snapshot: Arc::clone(&snapshot),
+            buffers: Arc::clone(&buffers),
+            snotice_rules: Arc::clone(&state.snotice_rules),
+        };
+
         let autojoin = entry.autojoin.clone();
         let cmd_tx_task = command_tx.clone();
         let task = self.runtime.spawn(async move {
@@ -340,10 +342,10 @@ impl FlumeClient {
                     maybe_ev = handle.event_rx.recv() => {
                         match maybe_ev {
                             Some(ev) => {
-                                update_snapshot(&snapshot_task, &ev);
-                                // Send autojoin on first Connected. M4 will
-                                // also forward the event to the EventCallback.
-                                if let IrcEvent::Connected { .. } = &ev {
+                                let was_connected =
+                                    matches!(ev, IrcEvent::Connected { .. });
+                                let out = dispatcher.handle(ev);
+                                if was_connected {
                                     for chan in &autojoin {
                                         let _ = cmd_tx_task
                                             .send(UserCommand::Join {
@@ -351,6 +353,11 @@ impl FlumeClient {
                                                 key: None,
                                             })
                                             .await;
+                                    }
+                                }
+                                if let Some(cb) = &callback {
+                                    for e in out {
+                                        cb.on_event(e);
                                     }
                                 }
                             }
@@ -365,6 +372,7 @@ impl FlumeClient {
             name,
             ServerHandle {
                 snapshot,
+                buffers,
                 command_tx,
                 shutdown_tx,
                 task,
@@ -410,28 +418,6 @@ impl FlumeClient {
                 }
             })
             .collect()
-    }
-}
-
-fn update_snapshot(snapshot: &Mutex<ServerSnapshot>, ev: &IrcEvent) {
-    let mut s = snapshot.lock().expect("snapshot poisoned");
-    match ev {
-        IrcEvent::Connected {
-            our_nick,
-            capabilities,
-            ..
-        } => {
-            s.state = ConnectionState::Connected;
-            s.our_nick = Some(our_nick.clone());
-            s.capabilities = capabilities.iter().cloned().collect();
-        }
-        IrcEvent::StateChanged { state, .. } => {
-            s.state = core_state_to_ffi(state);
-        }
-        IrcEvent::Disconnected { .. } => {
-            s.state = ConnectionState::Disconnected;
-        }
-        _ => {}
     }
 }
 

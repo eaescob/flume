@@ -10,6 +10,7 @@ uniffi::setup_scaffolding!();
 
 mod buffers;
 mod commands;
+mod dispatch;
 mod error;
 mod events;
 mod paths;
@@ -19,7 +20,7 @@ mod vault;
 
 pub use buffers::{BufferInfo, BufferKind, BufferRef, NickEntry};
 pub use error::FlumeError;
-pub use events::{ChatMessage, Event, EventCallback};
+pub use events::{Event, EventCallback};
 pub use servers::{
     AuthConfig, AuthMethod, BouncerType, ConnectionState, NetworkConfig, ServerInfo,
 };
@@ -27,20 +28,27 @@ pub use snotice::SnoticeRule;
 pub use vault::VaultStatus;
 
 use std::collections::HashMap;
-use std::sync::{Mutex, Once};
+use std::sync::{Arc, Mutex, Once};
 
 use flume_core::config::server::IrcConfig;
 use flume_core::config::vault::Vault;
 
+use crate::dispatch::CompiledSnoticeRule;
 use crate::servers::ServerHandle;
 
 /// Aggregated mutable state. One mutex covers all of it — contention is
 /// negligible because Swift callers operate sequentially per session.
 pub(crate) struct ClientState {
-    pub(crate) callback: Option<Box<dyn EventCallback>>,
+    /// Wrapped as Arc so connection tasks can hold their own handle.
+    /// `set_event_callback` swaps the Arc — new tasks pick up the new
+    /// callback; in-flight tasks continue to use whatever they cloned.
+    pub(crate) callback: Option<Arc<dyn EventCallback>>,
     pub(crate) vault: Option<Vault>,
     pub(crate) irc_config: IrcConfig,
     pub(crate) servers: HashMap<String, ServerHandle>,
+    /// Compiled snotice rules consulted by the dispatcher. Populated by M6
+    /// (add/remove/save endpoints); empty for now.
+    pub(crate) snotice_rules: Arc<Mutex<Vec<CompiledSnoticeRule>>>,
 }
 
 #[derive(uniffi::Object)]
@@ -74,6 +82,7 @@ impl FlumeClient {
                 vault: None,
                 irc_config,
                 servers: HashMap::new(),
+                snotice_rules: Arc::new(Mutex::new(Vec::new())),
             }),
         })
     }
@@ -81,7 +90,9 @@ impl FlumeClient {
     /// Register the callback that receives all events from all connected
     /// servers. Replaces any previous callback. Called once at app startup.
     pub fn set_event_callback(&self, callback: Box<dyn EventCallback>) {
-        self.state.lock().expect("state poisoned").callback = Some(callback);
+        // Convert Box → Arc so connection tasks can clone their own handle.
+        let arc: Arc<dyn EventCallback> = Arc::from(callback);
+        self.state.lock().expect("state poisoned").callback = Some(arc);
     }
 }
 

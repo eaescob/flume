@@ -806,6 +806,7 @@ name = "flume-uniffi"
 version = "1.2.7"
 dependencies = [
  "flume-core",
+ "regex",
  "serial_test",
  "tempfile",
  "thiserror 2.0.18",

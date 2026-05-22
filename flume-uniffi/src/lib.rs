@@ -75,6 +75,16 @@ impl FlumeClient {
             .and_then(|p| servers::load_irc_config_from(&p).ok())
             .unwrap_or_default();
 
+        // Load snotice.toml and compile each rule. Failures (missing file,
+        // invalid regex in a row) silently drop the bad rows rather than
+        // aborting startup — the UI can re-add them.
+        let snotice_rules: Vec<CompiledSnoticeRule> = paths::snotice_config_path()
+            .and_then(|p| snotice::load_persisted_rules(&p).ok())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|r| snotice::compile_rule(r).ok())
+            .collect();
+
         std::sync::Arc::new(Self {
             runtime,
             state: Mutex::new(ClientState {
@@ -82,7 +92,7 @@ impl FlumeClient {
                 vault: None,
                 irc_config,
                 servers: HashMap::new(),
-                snotice_rules: Arc::new(Mutex::new(Vec::new())),
+                snotice_rules: Arc::new(Mutex::new(snotice_rules)),
             }),
         })
     }

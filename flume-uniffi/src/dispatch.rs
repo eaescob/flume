@@ -19,10 +19,12 @@ use crate::servers::{ConnectionState, ServerSnapshot};
 /// in the FFI crate so flume-core doesn't grow a dep on it.
 pub(crate) struct CompiledSnoticeRule {
     pub id: String,
+    pub pattern: String,
     pub regex: regex::Regex,
     pub format: Option<String>,
     pub buffer: Option<String>,
     pub suppress: bool,
+    pub enabled: bool,
 }
 
 pub(crate) struct ServerDispatcher {
@@ -335,6 +337,9 @@ impl ServerDispatcher {
     fn try_route_snotice(&self, text: &str, out: &mut Vec<Event>) -> bool {
         let rules = self.snotice_rules.lock().expect("rules poisoned");
         for rule in rules.iter() {
+            if !rule.enabled {
+                continue;
+            }
             let Some(caps) = rule.regex.captures(text) else {
                 continue;
             };
@@ -634,10 +639,12 @@ mod tests {
         let d = dispatcher_for("libera", Some("flmtest"));
         d.snotice_rules.lock().unwrap().push(CompiledSnoticeRule {
             id: "connect".into(),
+            pattern: r"Client connecting: (\S+)".into(),
             regex: regex::Regex::new(r"Client connecting: (\S+)").unwrap(),
             format: Some("[connect] ${1}".into()),
             buffer: Some("snotice-connections".into()),
             suppress: false,
+            enabled: true,
         });
         d.handle(IrcEvent::MessageReceived {
             server_name: "libera".into(),
@@ -665,10 +672,12 @@ mod tests {
         let d = dispatcher_for("libera", Some("flmtest"));
         d.snotice_rules.lock().unwrap().push(CompiledSnoticeRule {
             id: "drop".into(),
+            pattern: r"Oper-up".into(),
             regex: regex::Regex::new(r"Oper-up").unwrap(),
             format: None,
             buffer: None,
             suppress: true,
+            enabled: true,
         });
         let events = d.handle(IrcEvent::MessageReceived {
             server_name: "libera".into(),

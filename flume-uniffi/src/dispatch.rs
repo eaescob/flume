@@ -111,9 +111,10 @@ impl ServerDispatcher {
         match msg.command {
             Command::Privmsg { target, text } => {
                 let (is_action, text) = parse_action(&text);
+                let from_is_us = is_us(&from_nick);
                 let buffer_target = if is_channel(&target) {
                     target.clone()
-                } else if !is_us(&from_nick) {
+                } else if !from_is_us {
                     // PM TO us → buffer keyed by sender's nick.
                     from_nick.clone()
                 } else {
@@ -127,13 +128,16 @@ impl ServerDispatcher {
                 };
                 let mut bufs = self.buffers.lock().expect("buffers poisoned");
                 bufs.ensure(&buffer_target, kind);
-                let is_highlight = !is_us(&from_nick) && {
-                    let nick = self.our_nick();
-                    nick.as_deref()
+                // Own outgoing messages (echo-message capability) should not
+                // count as unread or highlight — they're things we just sent.
+                if !from_is_us {
+                    let is_highlight = self
+                        .our_nick()
+                        .as_deref()
                         .map(|n| text.to_lowercase().contains(&n.to_lowercase()))
-                        .unwrap_or(false)
-                };
-                bufs.increment_unread(&buffer_target, is_highlight);
+                        .unwrap_or(false);
+                    bufs.increment_unread(&buffer_target, is_highlight);
+                }
                 drop(bufs);
 
                 out.push(Event::Message {
